@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Calendar Agent</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    :root{
+      --bg:#0b0f17; --panel:#0b0f17; --text:#e5e7eb; --muted:#9ca3af; --border:#1f2937;
+      --me-start:#2563eb; --me-end:#22c1dc; --bot-start:#4b5563; --bot-end:#374151;
+      --blue:#3b82f6; --blue-soft:#60a5fa; --maxw:820px; --appbar-h:58px; --composer-h:88px; --radius:16px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;color:var(--text);background:var(--bg)}
+    header.appbar{position:sticky;top:0;z-index:10;width:100%;height:var(--appbar-h);background:var(--panel);border-bottom:1px solid var(--border)}
+    .appbar__inner{max-width:var(--maxw);height:100%;margin:0 auto;padding:0 16px;display:flex;align-items:center;justify-content:space-between}
+    .title{margin:0;font-size:18px;font-weight:800;letter-spacing:.2px}
+    .subtitle{margin:0;font-size:12px;color:var(--muted)}
+
+    .chat-wrap{height:calc(100vh - var(--appbar-h) - var(--composer-h));display:flex;justify-content:center;align-items:stretch;padding:16px 12px;}
+    .chat-inner{width:100%;max-width:var(--maxw);display:flex;flex-direction:column}
+    .chat-stream{background:#0f1623;border:1px solid var(--border);border-radius:var(--radius);padding:14px;height:100%;overflow-y:auto;display:flex;flex-direction:column;gap:10px;}
+
+    .row{display:flex;width:100%}
+    .me{justify-content:flex-end}
+    .bot{justify-content:flex-start}
+    .bubble{max-width:78%;padding:11px 13px;line-height:1.4;border-radius:14px;word-wrap:break-word;white-space:pre-wrap;color:#fff;box-shadow:0 1px 1px rgba(0,0,0,.25);opacity:0;transform:translateY(6px);animation:pop 160ms ease-out forwards;}
+    @keyframes pop { to { opacity:1; transform:translateY(0) } }
+    .bubble.me{background:linear-gradient(135deg,var(--me-start),var(--me-end));border-bottom-right-radius:6px;}
+    .bubble.bot{background:linear-gradient(135deg,var(--bot-start),var(--bot-end));border-bottom-left-radius:6px;}
+
+    .composer{position:sticky;bottom:0;z-index:10;width:100%;height:var(--composer-h);background:var(--panel);border-top:1px solid var(--border)}
+    .composer__inner{max-width:var(--maxw);height:100%;margin:0 auto;padding:10px 12px;display:flex;gap:10px;align-items:center}
+    textarea{flex:1;height:100%;resize:none;padding:12px 14px;font:inherit;color:var(--text);background:#0a0f18;border:1.5px solid var(--blue);border-radius:12px;outline:none;}
+    textarea:focus{border-color:var(--blue-soft)}
+    button{height:56px;padding:0 20px;border:0;border-radius:12px;font-weight:700;letter-spacing:.2px;color:#0b0f17;background:linear-gradient(135deg,#9bd3ff,#65aaff);cursor:pointer;transition:filter 120ms ease;}
+    button.loading{filter:brightness(1.15)}
+    button:disabled{opacity:.6;cursor:not-allowed}
+
+    .typing{display:inline-flex;gap:6px;align-items:center;padding:8px 12px;border-radius:10px;background:linear-gradient(135deg,var(--bot-start),var(--bot-end));color:#e5e7eb}
+    .dot{width:6px;height:6px;border-radius:50%;background:#e5e7eb;opacity:.4;animation:blink 1s infinite}
+    .dot:nth-child(2){animation-delay:.2s}
+    .dot:nth-child(3){animation-delay:.4s}
+    @keyframes blink{0%,100%{opacity:.2;transform:translateY(0)}50%{opacity:1;transform:translateY(-2px)}}
+  </style>
+</head>
+<body>
+  <header class="appbar">
+    <div class="appbar__inner">
+      <div>
+        <h1 class="title">Calendar Agent</h1>
+        <p class="subtitle">Scheduling assistant (ET)</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="chat-wrap">
+    <div class="chat-inner">
+      <div id="chat" class="chat-stream"></div>
+    </div>
+  </main>
+
+  <footer class="composer">
+    <form class="composer__inner"
+          id="chatForm"
+          hx-post="/send"
+          hx-target="#chat"
+          hx-swap="beforeend">
+      <input type="hidden" name="chat_id" id="chat_id">
+      <textarea id="msg" name="text" placeholder="Type a message… e.g., schedule 45 min tomorrow at the earliest"></textarea>
+      <button id="sendBtn" type="submit">Send</button>
+      <span id="spinner" class="hidden">…</span>
+    </form>
+  </footer>
+
+  <script>
+    // Persist chat id
+    (function(){
+      const key="chat_id";
+      const v=localStorage.getItem(key)||(crypto.randomUUID?crypto.randomUUID():String(Date.now()));
+      localStorage.setItem(key,v);
+      document.getElementById("chat_id").value=v;
+    })();
+
+    const chat = document.getElementById('chat');
+    const form = document.getElementById('chatForm');
+    const ta   = document.getElementById('msg');
+    const btn  = document.getElementById('sendBtn');
+
+    form.addEventListener('submit', function(evt){
+      const txt = (ta.value||'').trim();
+      if (!txt) { evt.preventDefault(); return; }
+      const me = document.createElement('div');
+      me.className = 'row me';
+      me.innerHTML = `<div class="bubble me">${escapeHtmlMultiline(txt)}</div>`;
+      chat.appendChild(me);
+      chat.scrollTop = chat.scrollHeight;
+
+      const tip = document.createElement('div');
+      tip.id = 'typing';
+      tip.className = 'row bot';
+      tip.innerHTML = `<div class="typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>`;
+      chat.appendChild(tip);
+      chat.scrollTop = chat.scrollHeight;
+
+      btn.classList.add('loading');
+      btn.disabled = true;
+    });
+
+    document.body.addEventListener('htmx:afterSwap', function (evt) {
+      if (evt.detail.target && evt.detail.target.id === 'chat') {
+        const tip = document.getElementById('typing');
+        if (tip) tip.remove();
+        btn.classList.remove('loading');
+        btn.disabled = false;
+        ta.value = '';
+        chat.scrollTop = chat.scrollHeight;
+      }
+    });
+
+    document.body.addEventListener('htmx:responseError', function () {
+      const tip = document.getElementById('typing');
+      if (tip) tip.remove();
+      btn.classList.remove('loading');
+      btn.disabled = false;
+    });
+
+    ta.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (ta.value.trim().length) form.requestSubmit();
+      }
+    });
+
+    function escapeHtmlMultiline(s){
+      return s.replace(/&/g,"&amp;")
+              .replace(/</g,"&lt;")
+              .replace(/>/g,"&gt;")
+              .replace(/"/g,"&quot;")
+              .replace(/'/g,"&#39;")
+              .replace(/\n/g,"<br>");
+    }
+  </script>
+</body>
+</html>

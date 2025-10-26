@@ -1,0 +1,23 @@
+[project]
+name = "personal-cim"
+version = "0.1.0"
+requires-python = "==3.11.*"
+dependencies = [
+  "python-dotenv",
+  "pydantic",
+  "python-dateutil",
+  "fastapi",
+  "uvicorn",
+  "httpx",
+  "dateparser",
+  "google-api-python-client",
+  "google-auth-httplib2",
+  "google-auth-oauthlib",
+  "flask",
+  "mcp[cli]>=1.19.0",
+  "openai>=2.6.1",
+  "jinja2>=3.1.6",
+  "langgraph>=1.0.1",
+  "langchain-openai>=1.0.1",
+  "langchain-core>=1.0.1",
+]

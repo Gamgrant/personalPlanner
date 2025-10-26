@@ -1,0 +1,11 @@
+.env
+app/calendar_tool/creds/credentials.json
+app/calendar_tool/creds/token.json
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/.DS_Store
+.backup_just_in_case/20251025_234816_personal-cim.tgz
+*.zip
+list_of_models.py
+temp.py
