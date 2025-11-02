@@ -8,3 +8,5 @@
 .creds/
 credentials.json
 token.json
+*.egg-info/
+personalplanner.egg-info/

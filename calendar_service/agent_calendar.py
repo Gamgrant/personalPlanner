@@ -526,25 +526,29 @@ General Instructions:
 - The search may not be exact name, please do like a semantic search on the closest event you can find
 """
 
-root_agent = Agent(
-    model=MODEL,
-    name="google_calendar_agent",
-    description=(
-        "An AI assistant that manages your Google Calendar using natural language, including creating (with recurrence and attendees), "
-        "updating, deleting, searching, and suggesting meeting times in your local time zone."
-        + calendar_agent_instruction_text
-    ),
-    generate_content_config=types.GenerateContentConfig(temperature=0.2),
-    tools=[
-        # Only expose JSON-safe tools
-        nl_datetime_to_iso,
-        parse_recurrence,
-        create_event,
-        get_event,
-        update_event,
-        delete_event,
-        search_events,
-        list_events,
-        suggest_meeting_times,
-    ],
-)
+def build_agent():
+    from google.genai import types
+    from google.adk.agents import Agent
+
+    return Agent(
+        model=MODEL,
+        name="google_calendar_agent",
+        description=(
+            "An AI assistant that manages your Google Calendar using natural language, including creating "
+            "(with recurrence and attendees), updating, deleting, searching, and suggesting meeting times "
+            "in your local time zone."
+            + calendar_agent_instruction_text
+        ),
+        generate_content_config=types.GenerateContentConfig(temperature=0.2),
+        tools=[
+            nl_datetime_to_iso,
+            parse_recurrence,
+            create_event,
+            get_event,
+            update_event,
+            delete_event,
+            search_events,
+            list_events,
+            suggest_meeting_times,
+        ],
+    )
