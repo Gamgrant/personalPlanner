@@ -5,8 +5,7 @@
 **/.DS_Store
 *.zip
 .venv/
-.creds/
-credentials.json
-token.json
+.creds/credentials.json
+.creds/token.json
 *.egg-info/
 personalplanner.egg-info/

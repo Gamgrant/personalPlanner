@@ -24,8 +24,8 @@ uv run .creds/verify.py
 ```
 personalPlanner
 ├── .creds
-│   ├──credentials.json
-│   ├──     token.json              
+│   ├── credentials.json
+│   ├── token.json              
 │   └── verify.py
 ├── calendarAgent
 │   └── agent.py
