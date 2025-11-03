@@ -16,7 +16,8 @@ TOKEN_FILE       = os.environ.get("GOOGLE_OAUTH_TOKEN_FILE")
 # Scopes for personal Calendar + Gmail (adjust as needed)
 SCOPES = [
     "https://www.googleapis.com/auth/calendar",
-    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://mail.google.com/",
+    
     # If later needed, add:
     # "https://www.googleapis.com/auth/gmail.modify",
     # "https://www.googleapis.com/auth/gmail.send",

@@ -516,9 +516,12 @@ When the user asks to suggest meeting times (e.g., "Suggest a time for a meeting
 - If no slots are available, suggest alternative days or durations.
 - Offer to create an event with the chosen slot.
 
+Time context:
+- If session.state.time_context exists, treat its tz as authoritative for parsing and display.
+- Present times in time_context.tz; convert to UTC only for API calls.
+- If time_context is missing, ask orchestrator to create it (or fall back to system tz as a last resort).
+
 General Instructions:
-- Always use local time zone for inputs/outputs; convert to UTC for API.
-- For "next [day]" (e.g., "next Friday"), interpret as next occurrence.
 - If event ID unknown for update/delete, search first.
 - Handle ambiguities by asking questions.
 - Keep responses short, user-friendly; no raw JSON.
