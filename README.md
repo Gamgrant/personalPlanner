@@ -1,3 +1,71 @@
+Next steps:
+## more important tasks:
+stage 0:
+- google for jobs agent 
+- gets data, populates excel sheet
+- 
+---
+
+state 1:  is that data is populated in excel sheet
+
+google sheets agent
+- reads the data 
+- generates the custom emails 
+- pushes customizaiton platform for custom resume agent and saves the pdf back to the field
+
+custom resume agent:
+- displays the resume on the left job description of the right, displays keywords and synonyms
+- has clickable areas where user can add comments for genimi to processs
+- has 2 buttoms: update resume and Done
+- it can be iterative, so we can update it multiple times
+- it has acesss to projects, google docs, maybe slides, and potentially links to github
+- saves
+
+---
+state 2: automate reaching out to people 
+- finding jobs and recrutiers 
+    - apollo mcp like thing
+    - contactout and other platforms 
+    
+- populate recruiters to excel
+- if all required fields are there -> email and or call
+- emailing can be done with google agent
+    - paste text from excel table
+    - attach resume from excel
+- calling will be done with twillio or google call agent (idk if it exists)
+- attaching availability with link for my availability and scheduling the meeting similar to calendly - calendar agent
+
+---
+stage 3:
+- make the ui (firebase)
+- stats to show how many people reached out to, how many people responded, how many resumes customized, how much time saved
+- if we can hool up commet with out tool, then we can potentially apply automatically with custom resume
+- demo
+---
+stage 4:
+if someone got interested in us, we can schedule a prep for them in the calendar and pull useful links/ resources with reasonable time estimaes 
+
+## G suite
+gmail:
+- sending functionality 
+- attaching files and sending them as well as being able to understand received files
+- searching for a similar sender / title of email / (maybe) content
+
+gcal:
+- it is not giving ranges for events
+- not always reports the events if there are overlapped 
+
+google docs
+- TBD
+
+google sheets
+- TBD
+
+---
+
+
+
+
 # sync deps 
 ```bash
 uv sync
