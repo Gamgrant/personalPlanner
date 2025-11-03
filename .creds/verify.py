@@ -17,7 +17,8 @@ TOKEN_FILE       = os.environ.get("GOOGLE_OAUTH_TOKEN_FILE")
 SCOPES = [
     "https://www.googleapis.com/auth/calendar",
     "https://mail.google.com/",
-    
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.readonly",
     # If later needed, add:
     # "https://www.googleapis.com/auth/gmail.modify",
     # "https://www.googleapis.com/auth/gmail.send",

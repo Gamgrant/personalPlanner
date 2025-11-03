@@ -116,26 +116,40 @@ ORCH_INSTRUCTIONS = """
 You are the top-level coordinator.
 
 Time context (MUST DO at the start of every user turn):
-- Call the tool make_time_context(tz?, since_local?, date_hint?) and save the dict to session.state.time_context.
-- Derive since_local and/or date_hint from the user's words when relevant (e.g., “since 3 pm today” → since_local="3 pm", date_hint="today").
+- Call make_time_context(tz?, since_local?, date_hint?) and save the dict to session.state.time_context.
+- Derive since_local and/or date_hint from the user’s words when relevant (e.g., “since 3 pm today” → since_local="3 pm", date_hint="today").
 - Keep time_context in session.state and pass it along with transfers so sub-agents use the same tz and cutoffs.
 
 Routing:
-- Calendar requests → `google_calendar_agent`
-- Docs/notes/meeting-doc requests → `google_docs_agent`
-- Email/Gmail requests → `google_gmail_agent`
+- Calendar requests → google_calendar_agent
+- Docs/notes/meeting-doc requests → google_docs_agent
+- Email/Gmail requests → google_gmail_agent
+- Sheets data/operations → google_sheets_agent
+- Drive file/folder search/browse/download/export/sharing → google_drive_agent
 
-Gmail intent examples (route to `google_gmail_agent`):
+Gmail intent examples (route to google_gmail_agent):
 - “search my inbox for …”, “find unread from …”, “show thread about …”
 - “send an email to …”, “reply to … with …”, “forward …”, “add CC/BCC …”
 - “mark as read/unread”, “archive this”, “trash/delete”, “list labels”, “download attachments”
 
-Calendar intent examples (route to `google_calendar_agent`):
+Calendar intent examples (route to google_calendar_agent):
 - “create/update/delete a meeting”, “what’s on my calendar”, “suggest times next Tue”
 - “recurring every Friday…”, “invite alice@example.com”
 
-Docs intent examples (route to `google_docs_agent`):
+Docs intent examples (route to google_docs_agent):
 - “create a meeting notes doc”, “summarize this into a doc”, “insert bullets/sections”
+
+Sheets intent examples (route to google_sheets_agent):
+- “list my spreadsheets”, “open the sheet called ‘Q4 Pipeline’”
+- “read Sheet1!A1:D20 from <ID>”, “write these rows to ‘Tasks’!A2:C”
+- “clear ‘Data’!A1:Z”, “add a new tab ‘Summary’”, “create a new spreadsheet named ‘Weekly Plan’”
+- “update B2 with today’s date”, “append rows to ‘Log’”
+
+Drive intent examples (route to google_drive_agent):
+- “find files named ‘proposal’ updated last week”
+- “show my Google Docs in the ‘Sales’ folder”
+- “get a share link for <file>”, “export this Google Doc as PDF”
+- “download <file>”, “what’s the file size/type of <ID>”
 
 State handoff (MUST):
 - Always pass session.state (includes time_context) with transfer_to_agent.
@@ -156,6 +170,7 @@ from calendar_service.agent_calendar import build_agent as build_calendar_agent
 from google_docs_service.agent_google_docs import build_agent as build_docs_agent
 from gmail_service.agent_gmail import build_agent as build_gmail_agent
 from google_sheets_service.agent_google_sheets import build_agent as build_sheets_agent
+
 # Instantiate the sub-agents here (not in their modules)
 _calendar_agent = build_calendar_agent()
 _docs_agent = build_docs_agent()
