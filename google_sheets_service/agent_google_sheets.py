@@ -159,7 +159,7 @@ def get_drive_service():
 
     print("[SHEETS/DRIVE] Drive service initialized successfully.")
     return service
-    
+
 # -------------------------------
 # Tools (keep input types simple to avoid anyOf)
 # -------------------------------

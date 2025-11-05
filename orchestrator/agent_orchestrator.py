@@ -146,11 +146,6 @@ Sheets intent examples (route to google_sheets_agent):
 - “clear ‘Data’!A1:Z”, “add a new tab ‘Summary’”, “create a new spreadsheet named ‘Weekly Plan’”
 - “update B2 with today’s date”, “append rows to ‘Log’”
 
-Drive intent examples (route to google_drive_agent):
-- “find files named ‘proposal’ updated last week”
-- “show my Google Docs in the ‘Sales’ folder”
-- “get a share link for <file>”, “export this Google Doc as PDF”
-- “download <file>”, “what’s the file size/type of <ID>”
 
 Search intent examples (route to google_search_agent)
 - “what’s the weather in London?”

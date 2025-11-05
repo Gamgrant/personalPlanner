@@ -19,6 +19,7 @@ SCOPES = [
     "https://mail.google.com/",
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.readonly",
+     "https://www.googleapis.com/auth/documents",
     # If later needed, add:
     # "https://www.googleapis.com/auth/gmail.modify",
     # "https://www.googleapis.com/auth/gmail.send",
