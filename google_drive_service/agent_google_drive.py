@@ -255,6 +255,7 @@ Rules:
 - Use file IDs from list_drive_files().
 - Never expose credentials.
 - Keep text responses concise.
+- if you can't find the exact file, find the most similar file you can find, and check with orchestrator if that's what user wants.
 """.strip()
 
 
