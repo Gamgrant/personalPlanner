@@ -16,6 +16,8 @@ import os
 
 from google.genai import types
 from google.adk.agents import Agent
+from google.adk.tools import AgentTool
+
 
 ORCH_INSTRUCTIONS = """
 You are the top-level coordinator.
@@ -91,7 +93,6 @@ from gmail_service.agent_gmail import build_agent as build_gmail_agent
 from google_sheets_service.agent_google_sheets import build_agent as build_sheets_agent
 from google_drive_service.agent_google_drive import build_agent as build_drive_agent
 from google_search_service.agent_google_search import build_agent as build_search_agent
-from _time_agent.time_agent import build_agent as build_time_agent
 from ats_jobs_service.agent_ats_jobs_full import build_agent as build_ats_agent
 
 
@@ -101,7 +102,6 @@ _docs_agent = build_docs_agent()
 _gmail_agent  = build_gmail_agent()
 _sheets_agent = build_sheets_agent()
 _drive_agent = build_drive_agent()
-_temp_time_agent = build_time_agent()
 _search_tool = AgentTool(agent=build_search_agent())
 _build_ats_agent = build_ats_agent()
 
@@ -110,7 +110,7 @@ orchestrator_agent = Agent(
     name="orchestrator",
     description=ORCH_INSTRUCTIONS,
     generate_content_config=types.GenerateContentConfig(temperature=0.2),
-    sub_agents=[_calendar_agent, _docs_agent, _gmail_agent, _sheets_agent, _drive_agent, _temp_time_agent, _build_ats_agent],
+    sub_agents=[_calendar_agent, _docs_agent, _gmail_agent, _sheets_agent, _drive_agent, _build_ats_agent],
     tools=[_search_tool],  # lets the LLM explicitly hand off; no search tool here
 )
 
