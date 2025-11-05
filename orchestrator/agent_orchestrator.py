@@ -126,6 +126,7 @@ Routing:
 - Email/Gmail requests → google_gmail_agent
 - Sheets data/operations → google_sheets_agent
 - Drive file/folder search/browse/download/export/sharing → google_drive_agent
+- General web/public info requests → google_search_agent
 
 Gmail intent examples (route to google_gmail_agent):
 - “search my inbox for …”, “find unread from …”, “show thread about …”
@@ -151,6 +152,13 @@ Drive intent examples (route to google_drive_agent):
 - “get a share link for <file>”, “export this Google Doc as PDF”
 - “download <file>”, “what’s the file size/type of <ID>”
 
+Search intent examples (route to google_search_agent)
+- “what’s the weather in London?”
+- “who won the game last night?”
+- “search the web for electric car reviews”
+- “how tall is the Eiffel Tower?”
+
+“latest news on the stock market”
 State handoff (MUST):
 - Always pass session.state (includes time_context) with transfer_to_agent.
 - Sub-agents must read session.state.time_context for date/time parsing and display.
@@ -170,12 +178,13 @@ from calendar_service.agent_calendar import build_agent as build_calendar_agent
 from google_docs_service.agent_google_docs import build_agent as build_docs_agent
 from gmail_service.agent_gmail import build_agent as build_gmail_agent
 from google_sheets_service.agent_google_sheets import build_agent as build_sheets_agent
-
+from google_search_service.agent_google_search import build_agent as build_search_agent
 # Instantiate the sub-agents here (not in their modules)
 _calendar_agent = build_calendar_agent()
 _docs_agent = build_docs_agent()
 _gmail_agent  = build_gmail_agent()
 _sheets_agent = build_sheets_agent()
+_research_agent = build_search_agent()
 
 orchestrator_agent = Agent(
     model="gemini-2.5-flash",

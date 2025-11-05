@@ -146,6 +146,7 @@ dependencies = [
     "wcwidth==0.2.14",
     "websockets==15.0.1",
     "zipp==3.23.0",
+    "streamlit>=1.51.0",
 ]
 [tool.uv]
 managed = true
