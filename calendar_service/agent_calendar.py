@@ -71,19 +71,6 @@ def get_calendar_service():
     return build("calendar", "v3", credentials=creds)
 
 
-def get_user_timezone() -> str:
-    """
-    Detect the user's local time zone. Falls back to 'Asia/Kolkata' if detection fails.
-    """
-    try:
-        tz = str(get_localzone())
-        print(f"Detected local timezone: {tz}")
-        return tz
-    except Exception as e:
-        print(f"Warning: Could not detect local time zone ({str(e)}). Falling back to 'Asia/Kolkata'.")
-        return "Asia/Kolkata"
-
-
 def search_events(
     query: Optional[str] = None,
     time_min: Optional[str] = None,
@@ -112,7 +99,7 @@ def search_events(
         if not events:
             return ["No events found."]
 
-        user_tz = pytz.timezone(get_user_timezone())
+        user_tz = get_user_timezone()
         formatted_events: list[str] = []
         for event in events:
             start = event['start'].get('dateTime', event['start'].get('date'))
@@ -409,7 +396,7 @@ def suggest_meeting_times(
     """
     service = get_calendar_service()
     user_timezone = get_user_timezone()
-    user_tz = pytz.timezone(user_timezone)
+    user_tz = session.state.get("tz") or get_user_timezone()
 
     start_end = nl_datetime_to_iso(date_string, duration, time_preference)
     start_datetime = start_end["start_datetime"]
@@ -528,6 +515,14 @@ General Instructions:
 - Prioritize clarity and correctness.
 - The search may not be exact name, please do like a semantic search on the closest event you can find
 """
+
+def get_user_timezone(session=None):
+    if session and hasattr(session.state, "time_context"):
+        return session.state.time_context.get("tz") or str(get_localzone())
+    return str(get_localzone())
+
+
+
 
 def build_agent():
     from google.genai import types
