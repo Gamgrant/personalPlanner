@@ -115,10 +115,8 @@ def make_time_context(
 ORCH_INSTRUCTIONS = """
 You are the top-level coordinator.
 
-Time context (MUST DO at the start of every user turn):
-- Call make_time_context(tz?, since_local?, date_hint?) and save the dict to session.state.time_context.
-- Derive since_local and/or date_hint from the user’s words when relevant (e.g., “since 3 pm today” → since_local="3 pm", date_hint="today").
-- Keep time_context in session.state and pass it along with transfers so sub-agents use the same tz and cutoffs.
+### Time context — MUST DO
+At the **start of every user turn**, you must call the `make_time_context` tool to establish the current time context.
 
 Routing:
 - Calendar requests → google_calendar_agent
@@ -175,6 +173,7 @@ from gmail_service.agent_gmail import build_agent as build_gmail_agent
 from google_sheets_service.agent_google_sheets import build_agent as build_sheets_agent
 from google_drive_service.agent_google_drive import build_agent as build_drive_agent
 from google_search_service.agent_google_search import build_agent as build_search_agent
+from google.adk.tools import AgentTool, transfer_to_agent  # optional
 
 # Instantiate the sub-agents here (not in their modules)
 _calendar_agent = build_calendar_agent()
@@ -182,14 +181,15 @@ _docs_agent = build_docs_agent()
 _gmail_agent  = build_gmail_agent()
 _sheets_agent = build_sheets_agent()
 _drive_agent = build_drive_agent()
-_search_agent = build_search_agent()
+_search_tool = AgentTool(agent=build_search_agent())
 
 orchestrator_agent = Agent(
     model="gemini-2.5-flash",
     name="orchestrator",
     description=ORCH_INSTRUCTIONS,
     generate_content_config=types.GenerateContentConfig(temperature=0.2),
-    sub_agents=[_calendar_agent, _docs_agent, _gmail_agent, _sheets_agent, _drive_agent, _search_agent ],
+    sub_agents=[_calendar_agent, _docs_agent, _gmail_agent, _sheets_agent, _drive_agent],
+    tools=[_search_tool],  # lets the LLM explicitly hand off; no search tool here
 )
 
 
