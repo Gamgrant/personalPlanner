@@ -173,13 +173,11 @@ from calendar_service.agent_calendar import build_agent as build_calendar_agent
 from google_docs_service.agent_google_docs import build_agent as build_docs_agent
 from gmail_service.agent_gmail import build_agent as build_gmail_agent
 from google_sheets_service.agent_google_sheets import build_agent as build_sheets_agent
-from google_search_service.agent_google_search import build_agent as build_search_agent
 # Instantiate the sub-agents here (not in their modules)
 _calendar_agent = build_calendar_agent()
 _docs_agent = build_docs_agent()
 _gmail_agent  = build_gmail_agent()
 _sheets_agent = build_sheets_agent()
-_research_agent = build_search_agent()
 
 orchestrator_agent = Agent(
     model="gemini-2.5-flash",

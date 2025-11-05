@@ -1,3 +1,21 @@
+# Nov 5:
+- <span style="color:red">Steven</span> ★ truly web search agent (for resume customization, reasoning capabilities with access to web)
+- <span style="color:red">Steven</span> [easy] google drive agent
+- <span style="color:red">Steven</span> [easy] fix gmail agent so it can send emails and upload the pdf from google drive to the email
+
+- <span style="color:red">Grant</span> ★ make agent that connects to linkedin, glassdoor, Indeed and looks for recent (posted within 7 days) in agentic way 
+- <span style="color:red">Grant</span>  ★ connect to apollo io/contactout/rocket agent that can scrape info of recruiters, and managers, and reach out to them
+- <span style="color:red">Grant</span> [easy] <span style="color:red; font-weight:bold"> Steven i need your web search agent for this </span> cutomize resume for specific job using latex (Grant)
+
+# nov 6:
+- ★ cold calling agent, cold email agent (make sure that we can add voicemail because most of recruiters won't pick up the phone)
+- ★ start ui and cloud run  
+    - for ui :  
+        - upload all relevant files to google drive 
+        - list relevant github repos ()
+        - ★ ★ ★ ★ ★ ★ ★  authenticaltion of google services autimatically 
+
+
 Next steps:
 ## more important tasks:
 stage 0:
