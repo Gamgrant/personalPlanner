@@ -1,6 +1,9 @@
 import os
 import json
-from typing import List
+from typing import List, Optional
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from tzlocal import get_localzone
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -214,6 +217,63 @@ def append_doc_text(document_id: str, text: str) -> str:
         raise ValueError(f"Failed to append text: {str(e)}")
 
 
+def get_doc_modified_time(document_id: str) -> dict:
+    """
+    Retrieve the last modified time of a Google Doc in structured form.
+    """
+    drive = get_drive_service()
+    try:
+        file_metadata = drive.files().get(
+            fileId=document_id,
+            fields="name, modifiedTime, webViewLink",
+        ).execute()
+
+        modified_str = file_metadata.get("modifiedTime")
+        if not modified_str:
+            raise ValueError("No modifiedTime found in file metadata.")
+
+        modified_dt = datetime.fromisoformat(modified_str.replace("Z", "+00:00"))
+        local_tz = get_localzone()
+        modified_local = modified_dt.astimezone(local_tz)
+
+        return {
+            "document_id": document_id,
+            "document_name": file_metadata.get("name", "(untitled)"),
+            "datetime": modified_local.isoformat(),
+            "date": modified_local.strftime("%Y-%m-%d"),
+            "time": modified_local.strftime("%H:%M:%S"),
+            "weekday": modified_local.strftime("%A"),
+            "timezone": str(local_tz),
+            "summary": modified_local.strftime(
+                f"Last modified on %A, %b %d %Y at %I:%M %p %Z"
+            ),
+            "link": file_metadata.get("webViewLink"),
+        }
+    except HttpError as e:
+        raise ValueError(f"Failed to retrieve modified time: {str(e)}")
+
+
+# ------------------------------------------
+# Time Context Tool
+# ------------------------------------------
+def make_time_context(preferred_tz: Optional[str] = None) -> dict:
+    """Return structured current time context."""
+    try:
+        tz = ZoneInfo(preferred_tz) if preferred_tz else ZoneInfo(str(get_localzone()))
+    except Exception:
+        tz = ZoneInfo("America/New_York")
+
+    now = datetime.now(tz)
+    return {
+        "datetime": now.isoformat(),
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M:%S"),
+        "weekday": now.strftime("%A"),
+        "timezone": str(tz),
+        "summary": now.strftime("%A, %b %d %Y, %I:%M %p %Z"),
+    }
+
+
 # ------------------------------------------
 # Agent Definition
 # ------------------------------------------
@@ -223,6 +283,7 @@ You are a specialized Google Docs assistant. You can:
 - Retrieve document text
 - Create new documents
 - Append or write text
+- Get document modification times
 
 Rules:
 - Use document IDs from the list function.
@@ -245,5 +306,7 @@ def build_agent():
             get_doc_content,
             create_doc,
             append_doc_text,
+            make_time_context,
+            get_doc_modified_time,
         ],
     )

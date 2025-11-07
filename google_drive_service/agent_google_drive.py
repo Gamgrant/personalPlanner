@@ -6,14 +6,16 @@ It can:
 - List, search, and read Drive files
 - Upload new files (text or from URL)
 - Check sharing permissions
+- Retrieve file modification timestamps
 """
 
 import os
 import io
 import json
+from datetime import datetime
 from typing import List, Optional
-from tempfile import NamedTemporaryFile
 
+from tzlocal import get_localzone
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -100,7 +102,6 @@ def get_drive_service():
 # ------------------------------------------
 # Tools
 # ------------------------------------------
-
 def list_drive_files(max_results: int = 20) -> List[str]:
     """List recent non-trashed files from Google Drive."""
     drive = get_drive_service()
@@ -240,22 +241,59 @@ def get_drive_file_permissions(file_id: str) -> str:
         raise ValueError(f"Failed to get permissions: {e}")
 
 
+def get_drive_file_modified_time(file_id: str) -> dict:
+    """
+    Retrieve structured last-modified timestamp of a Drive file.
+    """
+    drive = get_drive_service()
+    try:
+        meta = drive.files().get(
+            fileId=file_id,
+            fields="id, name, mimeType, modifiedTime, webViewLink",
+        ).execute()
+
+        modified_str = meta.get("modifiedTime")
+        if not modified_str:
+            raise ValueError("No modifiedTime found for file.")
+
+        modified_dt = datetime.fromisoformat(modified_str.replace("Z", "+00:00"))
+        local_tz = get_localzone()
+        modified_local = modified_dt.astimezone(local_tz)
+
+        return {
+            "file_id": file_id,
+            "file_name": meta.get("name", "(untitled)"),
+            "mime_type": meta.get("mimeType"),
+            "datetime": modified_local.isoformat(),
+            "date": modified_local.strftime("%Y-%m-%d"),
+            "time": modified_local.strftime("%H:%M:%S"),
+            "weekday": modified_local.strftime("%A"),
+            "timezone": str(local_tz),
+            "summary": modified_local.strftime(
+                "Last modified on %A, %b %d %Y at %I:%M %p %Z"
+            ),
+            "link": meta.get("webViewLink"),
+        }
+    except HttpError as e:
+        raise ValueError(f"Failed to retrieve modified time: {e}")
+
+
 # ------------------------------------------
 # Agent Definition
 # ------------------------------------------
-
 drive_agent_instruction_text = """
 You are a Google Drive assistant. You can:
 - List files and folders
 - Read file contents
 - Upload or create new files
 - Check sharing permissions
+- Retrieve modification times for Drive files
 
 Rules:
 - Use file IDs from list_drive_files().
 - Never expose credentials.
 - Keep text responses concise.
-- if you can't find the exact file, find the most similar file you can find, and check with orchestrator if that's what user wants.
+- If you can't find the exact file, find the most similar one and confirm with the orchestrator.
 """.strip()
 
 
@@ -275,5 +313,6 @@ def build_agent():
             create_drive_file,
             upload_drive_file_from_url,
             get_drive_file_permissions,
+            get_drive_file_modified_time,  # <-- Added new tool
         ],
     )

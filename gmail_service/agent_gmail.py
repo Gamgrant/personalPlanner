@@ -1,5 +1,3 @@
-# google_docs_service/agent_google_gmail.py
-
 import os
 import base64
 import re
@@ -74,6 +72,27 @@ def get_drive_service():
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 # ======================================================
+# Time Context Helper
+# ======================================================
+
+def make_time_context(preferred_tz: Optional[str] = None) -> dict:
+    """
+    Returns a dictionary with current time, date, and timezone context.
+    Useful for timestamping emails or temporal reasoning in the agent.
+    """
+    try:
+        tz = ZoneInfo(preferred_tz) if preferred_tz else ZoneInfo(str(get_localzone()))
+    except Exception:
+        tz = ZoneInfo("America/New_York")
+    now = datetime.now(tz)
+    return {
+        "current_time": now.strftime("%I:%M %p"),
+        "current_date": now.strftime("%A, %B %d, %Y"),
+        "timezone": str(tz),
+        "iso_timestamp": now.isoformat(),
+    }
+
+# ======================================================
 # Helpers
 # ======================================================
 
@@ -82,15 +101,6 @@ def _extract_header(headers: list[dict[str, str]], name: str) -> Optional[str]:
         if h.get("name", "").lower() == name.lower():
             return h.get("value")
     return None
-
-
-def _format_local_epoch_ms(epoch_ms: int, tz_str: Optional[str] = None) -> str:
-    try:
-        zone = ZoneInfo(tz_str) if tz_str else ZoneInfo(str(get_localzone()))
-    except Exception:
-        zone = ZoneInfo("America/New_York")
-    dt = datetime.fromtimestamp(epoch_ms / 1000.0, zone)
-    return dt.strftime("%a %b %d, %Y · %I:%M %p %Z")
 
 
 def _build_mime_message(
@@ -129,7 +139,6 @@ def _build_mime_message(
 def _encode_message(msg: EmailMessage) -> dict[str, str]:
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
     return {"raw": raw}
-
 
 # ======================================================
 # Gmail Tools
@@ -179,19 +188,51 @@ def send_email(
             except Exception as e:
                 print(f"[GMAIL] Failed to attach Drive file {fid}: {e}")
 
-    # Send via Gmail
     encoded = _encode_message(msg)
     sent = gmail.users().messages().send(userId="me", body=encoded).execute()
     return f"Email sent successfully. Message ID: {sent.get('id')}"
 
+# ======================================================
+# Search Messages
+# ======================================================
+
+def search_messages(query: str, max_results: int = 5) -> list[str]:
+    """
+    Search Gmail messages by query string.
+    Examples:
+        query="from:boss@example.com subject:report"
+        query="after:2024/01/01 before:2024/12/31"
+    """
+    service = get_gmail_service()
+    try:
+        results = service.users().messages().list(userId="me", q=query, maxResults=max_results).execute()
+        messages = results.get("messages", [])
+        if not messages:
+            return [f"No messages found for query: {query}"]
+
+        formatted_results = []
+        for m in messages:
+            msg = service.users().messages().get(userId="me", id=m["id"], format="metadata").execute()
+            headers = msg.get("payload", {}).get("headers", [])
+            subject = next((h["value"] for h in headers if h["name"].lower() == "subject"), "(no subject)")
+            sender = next((h["value"] for h in headers if h["name"].lower() == "from"), "(unknown sender)")
+            date = next((h["value"] for h in headers if h["name"].lower() == "date"), "")
+            snippet = msg.get("snippet", "")[:100]
+            formatted_results.append(
+                f"📧 {subject}\nFrom: {sender}\nDate: {date}\nSnippet: {snippet}"
+            )
+        return formatted_results
+    except HttpError as e:
+        raise ValueError(f"Failed to search Gmail messages: {e}")
 
 # ======================================================
 # Agent Definition
 # ======================================================
 
 gmail_agent_instruction_text = """
-You are a Gmail agent capable of sending, reading, and organizing emails.
+You are a Gmail agent capable of sending, reading, searching, and organizing emails.
 You can also attach files from Google Drive by passing drive_file_ids=['<file_id>'].
+
 Example:
   send_email(
       to=['someone@example.com'],
@@ -199,6 +240,9 @@ Example:
       body_text='Please find attached the PDF.',
       drive_file_ids=['1AbCdEfGhIjKlMnOpQrStUvWxYz']
   )
+
+You can also search messages, e.g.:
+  search_messages("from:alice@example.com subject:meeting")
 Rules:
 - Use Drive file IDs from the Google Drive agent or list_drive_files().
 - Never expose raw credentials.
@@ -209,10 +253,12 @@ def build_agent():
     return Agent(
         model=MODEL,
         name="google_gmail_agent",
-        description="Gmail assistant that can send/read/manage messages and attach Google Drive files.",
+        description="Gmail assistant that can send, search, and organize messages, and attach Google Drive files.",
         generate_content_config=types.GenerateContentConfig(temperature=0.2),
         tools=[
             list_labels,
             send_email,
+            search_messages,  # ✅ now defined properly
+            make_time_context,
         ],
     )

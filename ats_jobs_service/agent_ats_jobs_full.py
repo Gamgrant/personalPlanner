@@ -1,42 +1,25 @@
 """
-ATS Jobs Agent (Legit sources only)
+ATS Jobs Agent (Greenhouse Only + ADK-compatible)
 
-This agent queries **official public endpoints** for applicant-tracking systems (ATS) that expose
-careers data without scraping or ToS gray areas. It mirrors the structure of your calendar agent:
-- Env-free (no OAuth or secrets needed for public boards)
-- JSON‑friendly, sync tools
-- `build_agent()` returns an Agent with tools registered
-
-Supported providers (public endpoints):
-1) Greenhouse Boards API (public):
-   - List:   https://boards-api.greenhouse.io/v1/boards/{company}/jobs
-   - Detail: https://boards-api.greenhouse.io/v1/boards/{company}/jobs/{id}?content=true
-
-2) Lever Postings API (public):
-   - List:   https://api.lever.co/v0/postings/{company}?mode=json
-   - Detail: https://api.lever.co/v0/postings/{company}/{post_id}?mode=json
-
-These endpoints are explicitly documented as public job-board APIs and are widely used.
-We **do not** log or store anything sensitive.
-
-Optional behavior:
-- If session.state.time_context.cutoff_iso_local is present, we filter out postings older than that cutoff when possible.
-
-Notes:
-- Company slug (board token) varies; e.g., "openai", "databricks", "stripe". If unknown, use the
-  Google Search agent to discover it (e.g., "site:boards.greenhouse.io {Company} careers").
+This agent queries official public Greenhouse job board APIs.
+It supports:
+- Listing company-specific jobs.
+- Finding jobs by title and years of experience across multiple companies.
+- Listing all new jobs posted today (no company input required).
+- Filtering by required experience (numeric or "junior/mid/senior").
+- A make_time_context tool compatible with ADK schema validation.
 """
 
 from __future__ import annotations
-
 import re
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
 import requests
-
 from google.adk.agents import Agent
 from google.genai import types
+from tzlocal import get_localzone
+from zoneinfo import ZoneInfo
 
 MODEL = "gemini-2.5-flash"
 
@@ -46,7 +29,6 @@ MODEL = "gemini-2.5-flash"
 
 def _parse_iso(ts: str) -> Optional[datetime]:
     try:
-        # Greenhouse sometimes returns '2025-01-02T12:34:56Z'
         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except Exception:
         return None
@@ -71,20 +53,91 @@ def _cutoff_from_session(session: Optional[dict]) -> Optional[datetime]:
 def _is_recent(ts: Optional[datetime], cutoff: Optional[datetime]) -> bool:
     if cutoff is None or ts is None:
         return True
-    # Compare in UTC to be safe
-    cu = cutoff.astimezone(timezone.utc)
-    tu = ts.astimezone(timezone.utc)
-    return tu >= cu
+    return ts.astimezone(timezone.utc) >= cutoff.astimezone(timezone.utc)
 
 
 def _normalize_text(html_or_text: Optional[str]) -> str:
     if not html_or_text:
         return ""
-    # Very light cleanup: strip tags crudely
     text = re.sub(r"<[^>]+>", " ", html_or_text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    return re.sub(r"\s+", " ", text).strip()
 
+
+def _parse_experience(text: str) -> Optional[int]:
+    """Extract numeric experience from user query or text."""
+    if not text:
+        return None
+    # Try for numeric years
+    match = re.search(r"(\d+)\s*(?:\+?\s*)?(?:years?|yrs?)\s*(?:of\s*)?(?:experience)?", text, re.I)
+    if match:
+        return int(match.group(1))
+
+    # Map qualitative levels
+    levels = {
+        "junior": 1,
+        "entry": 1,
+        "mid": 4,
+        "intermediate": 4,
+        "senior": 6,
+        "lead": 8,
+    }
+    for word, yrs in levels.items():
+        if word in text.lower():
+            return yrs
+    return None
+
+
+def _title_matches(job_title: str, target_title: str) -> bool:
+    return target_title.lower() in job_title.lower()
+
+
+def find_experience_in_description(description: str) -> Optional[int]:
+    """
+    Extracts a representative years-of-experience requirement (integer)
+    from a job description.
+    Examples:
+        '2-5 years of experience' -> 5
+        '3+ years experience' -> 3
+        'minimum 4 years' -> 4
+    Returns None if no match found.
+    """
+    if not description:
+        return None
+    text = description.lower()
+
+    match = re.search(
+        r'(?:(?:at\s+least|minimum|over|around)\s*)?(\d+)\s*(?:[-to–]\s*(\d+))?\s*(?:\+?\s*)?(?:years?|yrs?)\s*(?:of\s+experience)?',
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    start = int(match.group(1))
+    end = int(match.group(2)) if match.group(2) else start
+    return max(start, end)
+
+# -------------------------------
+# Time Context (ADK compatible)
+# -------------------------------
+
+def make_time_context(preferred_tz: Optional[str] = None) -> dict:
+    try:
+        tz = ZoneInfo(preferred_tz) if preferred_tz else get_localzone()
+    except Exception:
+        tz = ZoneInfo("America/New_York")
+
+    now = datetime.now(tz)
+    return {
+        "datetime": now.isoformat(),
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M:%S"),
+        "weekday": now.strftime("%A"),
+        "timezone": str(tz),
+        "utc_offset": now.strftime("%z"),
+        "cutoff_iso_local": now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat(),
+        "summary": now.strftime("%A, %b %d %Y, %I:%M %p %Z"),
+    }
 
 # -------------------------------
 # Greenhouse
@@ -93,163 +146,143 @@ def _normalize_text(html_or_text: Optional[str]) -> str:
 GH_LIST_URL = "https://boards-api.greenhouse.io/v1/boards/{company}/jobs"
 GH_DETAIL_URL = "https://boards-api.greenhouse.io/v1/boards/{company}/jobs/{job_id}?content=true"
 
+DEFAULT_COMPANIES = ["openai", "stripe", "databricks", "notion", "anthropic", "asana"]
 
-def greenhouse_list_jobs(company: str, session: Optional[dict] = None) -> str:
-    """Return a concise, formatted list of current Greenhouse jobs for a company."""
+def greenhouse_list_jobs(company: str, session: Optional[dict] = None) -> List[Dict[str, Any]]:
     url = GH_LIST_URL.format(company=company)
     r = requests.get(url, timeout=30)
     r.raise_for_status()
     data = r.json() or {}
     jobs = data.get("jobs", [])
     cutoff = _cutoff_from_session(session)
-
-    lines: List[str] = [f"Greenhouse jobs for '{company}': {len(jobs)} found\n"]
-    idx = 1
+    results = []
     for j in jobs:
-        # Greenhouse: keys: id, title, updated_at, location{name}, absolute_url, departments, offices
         updated_at = _parse_iso(j.get("updated_at") or j.get("created_at") or "")
         if not _is_recent(updated_at, cutoff):
             continue
-        title = j.get("title", "(untitled)")
-        loc = (j.get("location") or {}).get("name", "")
-        job_id = j.get("id")
-        abs_url = j.get("absolute_url", "")
-        lines.append(f"{idx}. {title} — {loc}\n   ID: {job_id}  URL: {abs_url}")
-        idx += 1
-    if idx == 1:
-        lines.append("No postings at/after cutoff.")
-    return "\n".join(lines)
+        results.append({
+            "company": company,
+            "title": j.get("title", ""),
+            "location": (j.get("location") or {}).get("name", ""),
+            "date_posted": updated_at.isoformat() if updated_at else "",
+            "id": str(j.get("id")),
+            "url": j.get("absolute_url", ""),
+            "description": _normalize_text(j.get("content") or ""),
+        })
+    return results
 
 
-def greenhouse_get_job(company: str, job_id: int) -> str:
-    """Fetch a single job with full description from Greenhouse."""
+def greenhouse_get_job(company: str, job_id: int) -> Dict[str, Any]:
     url = GH_DETAIL_URL.format(company=company, job_id=job_id)
     r = requests.get(url, timeout=30)
     r.raise_for_status()
     j = r.json() or {}
-    title = j.get("title", "(untitled)")
-    loc = (j.get("location") or {}).get("name", "")
-    abs_url = j.get("absolute_url", "")
-    desc = _normalize_text(j.get("content") or j.get("description"))
     updated_at = j.get("updated_at") or j.get("created_at")
-
-    return (
-        f"Greenhouse Job Detail\nTitle: {title}\nLocation: {loc}\nUpdated: {updated_at}\nURL: {abs_url}\n\nDescription:\n{desc[:4000]}"
-    )
-
+    return {
+        "company": company,
+        "title": j.get("title", ""),
+        "location": (j.get("location") or {}).get("name", ""),
+        "date_posted": updated_at,
+        "id": str(j.get("id")),
+        "url": j.get("absolute_url", ""),
+        "description": _normalize_text(j.get("content") or j.get("description")),
+    }
 
 # -------------------------------
-# Lever
+# Multi-company Search / Experience Filter
 # -------------------------------
 
-LEVER_LIST_URL = "https://api.lever.co/v0/postings/{company}?mode=json"
-LEVER_DETAIL_URL = "https://api.lever.co/v0/postings/{company}/{post_id}?mode=json"
+def search_jobs(query: str, session: Optional[dict] = None, max_results: int = 50) -> str:
+    """
+    Searches Greenhouse jobs across default companies by title and optional experience.
+    Enforces experience filter: keeps only jobs requiring ≤ (years_exp + 2).
+    """
+    years_exp = _parse_experience(query)
+    title_match = re.findall(r"(?:job|role|position)\s*(?:for|as)?\s*([\w\s\-]+)", query, re.I)
+    target_title = title_match[0] if title_match else query.strip()
 
+    combined_jobs: List[Dict[str, Any]] = []
+    for comp in DEFAULT_COMPANIES:
+        try:
+            gh_jobs = greenhouse_list_jobs(comp, session=session)
+            for job in gh_jobs:
+                if not _title_matches(job["title"], target_title):
+                    continue
 
-def lever_list_jobs(company: str, session: Optional[dict] = None) -> str:
-    """Return a concise, formatted list of current Lever jobs for a company."""
-    url = LEVER_LIST_URL.format(company=company)
-    r = requests.get(url, timeout=30)
-    r.raise_for_status()
-    posts = r.json() or []
-    cutoff = _cutoff_from_session(session)
+                job_exp = find_experience_in_description(job["description"])
+                if years_exp and job_exp and job_exp > years_exp + 2:
+                    continue  # skip overqualified postings
 
-    lines: List[str] = [f"Lever jobs for '{company}': {len(posts)} found\n"]
-    idx = 1
-    for p in posts:
-        # Lever: keys include id, text (title), createdAt (ms), updatedAt (ms), categories{location, team}, hostedUrl
-        updated_ms = p.get("updatedAt") or p.get("createdAt")
-        ts = datetime.fromtimestamp(updated_ms / 1000.0, tz=timezone.utc) if updated_ms else None
-        if not _is_recent(ts, cutoff):
+                combined_jobs.append(job)
+                if len(combined_jobs) >= max_results:
+                    break
+        except Exception:
             continue
-        title = p.get("text", "(untitled)")
-        loc = (p.get("categories") or {}).get("location", "")
-        post_id = p.get("id")
-        abs_url = p.get("hostedUrl", "")
-        lines.append(f"{idx}. {title} — {loc}\n   ID: {post_id}  URL: {abs_url}")
-        idx += 1
-    if idx == 1:
-        lines.append("No postings at/after cutoff.")
+
+    if not combined_jobs:
+        return f"No suitable '{target_title}' jobs found for ~{years_exp or 'any'} years of experience."
+
+    lines = [f"Found {len(combined_jobs)} matching '{target_title}' jobs (~{years_exp or 'any'} yrs exp):\n"]
+    for idx, j in enumerate(combined_jobs[:max_results], 1):
+        exp_info = find_experience_in_description(j["description"])
+        exp_text = f" | Req: {exp_info} yrs" if exp_info else ""
+        lines.append(
+            f"{idx}. {j['title']} — {j['company']} — {j['location']}{exp_text}\n"
+            f"   Date: {j['date_posted']}\n   ID: {j['id']}\n   Link: {j['url']}\n"
+            f"   Description: {j['description']}\n"
+        )
     return "\n".join(lines)
 
 
-def lever_get_job(company: str, post_id: str) -> str:
-    """Fetch a single Lever posting with full description."""
-    url = LEVER_DETAIL_URL.format(company=company, post_id=post_id)
-    r = requests.get(url, timeout=30)
-    r.raise_for_status()
-    p = r.json() or {}
-    title = p.get("text", "(untitled)")
-    loc = (p.get("categories") or {}).get("location", "")
-    abs_url = p.get("hostedUrl", "")
-    desc = _normalize_text(p.get("descriptionPlain") or p.get("description") or "")
-    updated_ms = p.get("updatedAt") or p.get("createdAt")
-    updated_iso = (
-        datetime.fromtimestamp(updated_ms / 1000.0, tz=timezone.utc).isoformat() if updated_ms else ""
-    )
-
-    return (
-        f"Lever Job Detail\nTitle: {title}\nLocation: {loc}\nUpdated: {updated_iso}\nURL: {abs_url}\n\nDescription:\n{desc[:4000]}"
-    )
-
-
-# -------------------------------
-# Convenience / Multi-provider
-# -------------------------------
-
-def list_company_jobs(company: str, providers: Optional[List[str]] = None, session: Optional[dict] = None) -> str:
-    """Try multiple providers for a company slug and combine results.
-
-    providers: subset of {"greenhouse", "lever"}. If None, tries both.
+def list_recent_jobs(session: Optional[dict] = None, max_results: int = 50) -> str:
     """
-    prov = [p.lower() for p in (providers or ["greenhouse", "lever"])]
-    chunks: List[str] = []
-    if "greenhouse" in prov:
-        try:
-            chunks.append(greenhouse_list_jobs(company, session=session))
-        except Exception as e:
-            chunks.append(f"Greenhouse error: {e}")
-    if "lever" in prov:
-        try:
-            chunks.append(lever_list_jobs(company, session=session))
-        except Exception as e:
-            chunks.append(f"Lever error: {e}")
-    return "\n\n".join(chunks)
-
-
-def get_job_details(provider: str, company: str, job_id: str) -> str:
-    """Dispatch to provider-specific detail getter.
-
-    provider: "greenhouse" expects integer job_id; "lever" expects posting id string.
+    Lists all jobs posted or updated today across default Greenhouse companies.
+    Uses session.state.time_context.cutoff_iso_local to define 'today'.
     """
-    p = provider.lower()
-    if p == "greenhouse":
-        try:
-            jid = int(job_id)
-        except ValueError:
-            raise ValueError("Greenhouse job_id must be an integer.")
-        return greenhouse_get_job(company, jid)
-    if p == "lever":
-        return lever_get_job(company, job_id)
-    raise ValueError("Unsupported provider. Use 'greenhouse' or 'lever'.")
+    cutoff = _cutoff_from_session(session)
+    if cutoff is None:
+        cutoff = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
+    combined_jobs: List[Dict[str, Any]] = []
+    for comp in DEFAULT_COMPANIES:
+        try:
+            gh_jobs = greenhouse_list_jobs(comp, session=session)
+            for job in gh_jobs:
+                ts = _parse_iso(job.get("date_posted", "")) or datetime.now(timezone.utc)
+                if _is_recent(ts, cutoff):
+                    combined_jobs.append(job)
+                if len(combined_jobs) >= max_results:
+                    break
+        except Exception:
+            continue
+
+    if not combined_jobs:
+        return "No new jobs posted today across monitored Greenhouse companies."
+
+    lines = [f"Found {len(combined_jobs)} new jobs today ({cutoff.date()}):\n"]
+    for idx, j in enumerate(combined_jobs[:max_results], 1):
+        exp_info = find_experience_in_description(j["description"])
+        exp_text = f" | Req: {exp_info} yrs" if exp_info else ""
+        lines.append(
+            f"{idx}. {j['title']} — {j['company']} — {j['location']}{exp_text}\n"
+            f"   Date: {j['date_posted']}\n   ID: {j['id']}\n   Link: {j['url']}\n"
+            f"   Description: {j['description']}\n"
+        )
+    return "\n".join(lines)
 
 # -------------------------------
-# Agent factory
+# Agent Factory
 # -------------------------------
 
 ats_agent_instruction_text = """
-You are a helpful ATS jobs assistant that ONLY uses official public job-board APIs (no scraping).
-
+You are a helpful ATS jobs assistant that uses official public Greenhouse APIs (no scraping).
 Capabilities:
-- List a company's open roles via Greenhouse or Lever when given the company slug.
-- Fetch details for a specific job by ID.
-- Respect orchestrator session.state.time_context.cutoff_iso_local by filtering older postings.
-
-Behavior:
-- Keep responses concise and readable: title, location, URL, and a short description preview in details.
-- If the company slug is unknown or returns 404, suggest using the web search agent to discover the correct slug.
-- Never imply LinkedIn scraping or private APIs.
+- List company-specific jobs.
+- Search for roles by title and years of experience.
+- List all new jobs posted today (no input required).
+- Always include: title, company, location, date posted, description, ID, and link.
+- Enforce that returned jobs roughly match the user's requested experience (±2 years).
+- Respect orchestrator session.state.time_context.cutoff_iso_local.
 """
 
 def build_agent():
@@ -257,16 +290,16 @@ def build_agent():
         model=MODEL,
         name="ats_jobs_agent",
         description=(
-            "An assistant that queries public Greenhouse/Lever job-board APIs for legit job listings. "
+            "An assistant that queries public Greenhouse job-board APIs for legitimate job listings. "
             + ats_agent_instruction_text
         ),
         generate_content_config=types.GenerateContentConfig(temperature=0.2),
         tools=[
             greenhouse_list_jobs,
             greenhouse_get_job,
-            lever_list_jobs,
-            lever_get_job,
-            list_company_jobs,
-            get_job_details,
+            search_jobs,
+            list_recent_jobs,
+            find_experience_in_description,
+            make_time_context,
         ],
     )

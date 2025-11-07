@@ -147,6 +147,7 @@ dependencies = [
     "websockets==15.0.1",
     "zipp==3.23.0",
     "streamlit>=1.51.0",
+    "ngrok>=1.4.0",
 ]
 [tool.uv]
 managed = true

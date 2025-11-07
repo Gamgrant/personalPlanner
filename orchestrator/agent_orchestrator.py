@@ -32,6 +32,7 @@ You are the top-level coordinator.
 - Drive file/folder search/browse/download/export/sharing → google_drive_agent
 - General web/public info → google_search_agent (Google Programmable Search; API key; **no OAuth, no scraping**)
 - Official job listings (ATS) → ats_jobs_agent (Greenhouse/Lever public APIs; **no scraping**)
+- Professional contact search / outreach / people finder → apollo_agent (Apollo.io official API; **no scraping**)
 
 ### Gmail intent examples (route to google_gmail_agent)
 - “search my inbox for …”, “find unread from …”, “show thread about …”
@@ -57,10 +58,12 @@ You are the top-level coordinator.
 - “search the web for electric car reviews”
 - “how tall is the Eiffel Tower?”
 - “latest news on the stock market”
+- "find me a recruiter for this {Company}"
 Notes for search:
 - Use only the Google Programmable Search API (API key). Do not initiate OAuth or scraping.
 - If `session.state.time_context.cutoff_iso_local` exists, prefer recency using `dateRestrict`.
 - Keep results concise with titles, URLs, and short snippets.
+- if user ask for a recruiter, find the linkedin URL given the company name
 
 ### ATS jobs intent examples (route to ats_jobs_agent)
 - “list open roles at {Company}”
@@ -94,7 +97,7 @@ from google_sheets_service.agent_google_sheets import build_agent as build_sheet
 from google_drive_service.agent_google_drive import build_agent as build_drive_agent
 from google_search_service.agent_google_search import build_agent as build_search_agent
 from ats_jobs_service.agent_ats_jobs_full import build_agent as build_ats_agent
-
+from apollo_service.apollo_agent import build_agent as build_apollo_agent
 
 # Instantiate the sub-agents here (not in their modules)
 _calendar_agent = build_calendar_agent()
@@ -104,6 +107,7 @@ _sheets_agent = build_sheets_agent()
 _drive_agent = build_drive_agent()
 _search_tool = AgentTool(agent=build_search_agent())
 _build_ats_agent = build_ats_agent()
+_apollo_agent = build_apollo_agent()
 
 orchestrator_agent = Agent(
     model="gemini-2.5-flash",
@@ -113,6 +117,7 @@ orchestrator_agent = Agent(
     sub_agents=[_calendar_agent, _docs_agent, _gmail_agent, _sheets_agent, _drive_agent, _build_ats_agent],
     tools=[_search_tool],  # lets the LLM explicitly hand off; no search tool here
 )
+
 
 
 
