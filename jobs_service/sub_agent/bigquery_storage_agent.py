@@ -1,0 +1,323 @@
+import os
+import json
+from typing import List, Dict, Any, Optional
+
+from googleapiclient.errors import HttpError
+from google.adk.agents import Agent
+from google.genai import types
+
+from utils.google_service_helpers import get_google_service  # centralized auth
+
+# Model comes from .env (utils/env_loader has already been called earlier)
+MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
+
+# Scopes: read/write Sheets + Drive listing
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.readonly",
+]
+
+# -------------------------------
+# Service factories
+# -------------------------------
+def get_sheets_service() -> object:
+    return get_google_service("sheets", "v4", SCOPES, "BIGQUERY_SHEETS")
+
+def get_drive_service() -> object:
+    return get_google_service("drive", "v3", SCOPES, "BIGQUERY_DRIVE")
+
+# -------------------------------
+# Tools (AFC-friendly signatures)
+# -------------------------------
+def list_spreadsheets(max_results: Optional[int] = None) -> List[str]:
+    """
+    List all spreadsheets the user can access (across My Drive and Shared Drives).
+    If max_results is provided and > 0, truncates to that many; otherwise returns all.
+    """
+    drive = get_drive_service()
+    try:
+        files: List[Dict[str, Any]] = []
+        page_token: Optional[str] = None
+        while True:
+            page_size = 1000
+            if max_results and max_results > 0:
+                remaining = max_results - len(files)
+                if remaining <= 0:
+                    break
+                page_size = min(page_size, remaining)
+
+            params = {
+                "q": "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
+                "fields": "nextPageToken, files(id,name,modifiedTime,webViewLink)",
+                "orderBy": "modifiedTime desc",
+                "pageSize": page_size,
+                "supportsAllDrives": True,
+                "includeItemsFromAllDrives": True,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+
+            resp = drive.files().list(**params).execute()
+            files.extend(resp.get("files", []) or [])
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+
+        if not files:
+            return ["No spreadsheets found."]
+
+        return [
+            f"{f.get('name','(untitled)')} — ID: {f.get('id')} — "
+            f"Modified: {f.get('modifiedTime','?')} — Link: {f.get('webViewLink','-')}"
+            for f in files
+        ]
+    except HttpError as e:
+        raise ValueError(f"Failed to list spreadsheets: {e}")
+
+def get_spreadsheet_info(spreadsheet_id: str) -> str:
+    """Return spreadsheet title and sheet names/sizes."""
+    sheets = get_sheets_service()
+    try:
+        spreadsheet = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        title = spreadsheet.get("properties", {}).get("title", "Untitled")
+        raw_sheets = spreadsheet.get("sheets", []) or []
+        lines = [f'Spreadsheet: "{title}" (ID: {spreadsheet_id})', f"Sheets ({len(raw_sheets)}):"]
+        for s in raw_sheets:
+            props = s.get("properties", {}) or {}
+            name = props.get("title", "Sheet")
+            sid = props.get("sheetId", "?")
+            grid = props.get("gridProperties", {}) or {}
+            rows = grid.get("rowCount", "?")
+            cols = grid.get("columnCount", "?")
+            lines.append(f'  - "{name}" (ID: {sid}) | Size: {rows}x{cols}')
+        return "\n".join(lines)
+    except HttpError as e:
+        raise ValueError(f"Failed to get spreadsheet info: {e}")
+
+def read_sheet_values(spreadsheet_id: str, range_name: str = "") -> List[str]:
+    """
+    Read values from a range. If range_name is empty or just a sheet name,
+    returns all used values from that sheet (no 50-row caps).
+    Examples: "", "Sheet1", "Sheet1!A1:Z1000"
+    """
+    sheets = get_sheets_service()
+    try:
+        # If empty range, the API supports using only the sheet name to get entire used grid.
+        # If even that is empty, try the spreadsheet's first sheet name.
+        effective_range = range_name
+        if not effective_range:
+            meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets(properties(title))").execute()
+            first = (meta.get("sheets") or [{}])[0]
+            title = (first.get("properties") or {}).get("title", "Sheet1")
+            effective_range = title  # entire sheet used range
+
+        result = sheets.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=effective_range
+        ).execute()
+        values = result.get("values", []) or []
+        if not values:
+            return [f"No data found in range '{effective_range}'."]
+        base_len = len(values[0])
+        lines: List[str] = []
+        for i, row in enumerate(values, 1):
+            padded = row + [""] * max(0, base_len - len(row))
+            lines.append(f"Row {i:2d}: {padded}")
+        return lines
+    except HttpError as e:
+        raise ValueError(f"Failed to read values: {e}")
+
+def write_sheet_values(
+    spreadsheet_id: str,
+    range_name: str,
+    values_json: str,
+    value_input_option: str = "USER_ENTERED",
+) -> str:
+    """Write a 2D JSON array into a range (no silent caps)."""
+    sheets = get_sheets_service()
+    try:
+        try:
+            data_2d = json.loads(values_json)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"'values_json' must be valid JSON: {e}")
+
+        if not isinstance(data_2d, list) or any(not isinstance(r, list) for r in data_2d):
+            raise ValueError("'values_json' must decode to a 2D list, e.g. [[...],[...]]")
+
+        result = sheets.spreadsheets().values().update(
+            spreadsheetId=spreadsheets_id if False else spreadsheet_id,  # keep key stable
+            range=range_name,
+            valueInputOption=value_input_option,
+            body={"values": data_2d},
+        ).execute()
+
+        return (
+            f"Updated '{range_name}'. "
+            f"Cells: {result.get('updatedCells', 0)}, "
+            f"Rows: {result.get('updatedRows', 0)}, "
+            f"Columns: {result.get('updatedColumns', 0)}."
+        )
+    except HttpError as e:
+        raise ValueError(f"Failed to write values: {e}")
+
+# -------------------------------
+# Helpers for Job_search_Database
+# -------------------------------
+def _find_job_search_spreadsheet_id(name: str = "Job_search_Database") -> str:
+    """
+    Robustly find spreadsheet ID by name (case-insensitive, across all drives).
+    Preference order:
+      1) exact case-insensitive match
+      2) startswith case-insensitive
+      3) contains case-insensitive
+    """
+    drive = get_drive_service()
+
+    target_lower = name.lower()
+    candidates: List[Dict[str, Any]] = []
+    page_token: Optional[str] = None
+
+    while True:
+        resp = drive.files().list(
+            q="mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
+            pageSize=1000,
+            fields="nextPageToken, files(id,name,webViewLink)",
+            orderBy="modifiedTime desc",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+            pageToken=page_token,
+        ).execute()
+        files = resp.get("files", []) or []
+        candidates.extend(files)
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+
+    if not candidates:
+        raise ValueError(
+            f"No spreadsheets available to search. "
+            f"Ensure Drive access and sharing permissions are set."
+        )
+
+    # 1) exact (ci)
+    for f in candidates:
+        if (f.get("name") or "").lower() == target_lower:
+            return f["id"]
+    # 2) startswith (ci)
+    for f in candidates:
+        if (f.get("name") or "").lower().startswith(target_lower):
+            return f["id"]
+    # 3) contains (ci)
+    for f in candidates:
+        if target_lower in (f.get("name") or "").lower():
+            return f["id"]
+
+    raise ValueError(
+        f"Spreadsheet named like '{name}' not found in Drive. "
+        f"Consider renaming to '{name}' exactly or update your config."
+    )
+
+def _get_first_sheet_name(spreadsheet_id: str) -> str:
+    sheets = get_sheets_service()
+    resp = sheets.spreadsheets().get(
+        spreadsheetId=spreadsheet_id,
+        fields="sheets(properties(title))",
+    ).execute()
+    sheets_list = resp.get("sheets", []) or []
+    if not sheets_list:
+        raise ValueError("Target spreadsheet has no sheets.")
+    return sheets_list[0]["properties"]["title"]
+
+def append_jobs_to_job_search_database(jobs_result: List[Dict[str, Any]]) -> str:
+    """
+    Append job results (title, url, company, location, description, date_posted)
+    into the first sheet of 'Job_search_Database' (no arbitrary caps).
+    """
+    if not jobs_result:
+        return "No jobs to append (jobs_result is empty)."
+
+    rows: List[List[Any]] = []
+    for j in jobs_result:
+        if not isinstance(j, dict):
+            continue
+        rows.append([
+            j.get("title", ""),
+            j.get("url", ""),
+            j.get("company", ""),
+            j.get("location", ""),
+            j.get("description", ""),
+            j.get("date_posted", ""),
+        ])
+
+    if not rows:
+        return "No valid job records found in jobs_result."
+
+    spreadsheet_id = _find_job_search_spreadsheet_id("Job_search_Database")
+    sheet_name = _get_first_sheet_name(spreadsheet_id)
+    sheets = get_sheets_service()
+
+    result = sheets.spreadsheets().values().append(
+        spreadsheetId=spreadsheet_id,
+        range=f"{sheet_name}!A2:F",
+        valueInputOption="USER_ENTERED",
+        insertDataOption="INSERT_ROWS",
+        body={"values": rows},
+    ).execute()
+
+    updated = result.get("updates", {}).get("updatedRows") or len(rows)
+    return f"Appended {updated} job rows to '{sheet_name}' in 'Job_search_Database'."
+
+# -------------------------------
+# Agents
+# -------------------------------
+sheets_agent_instruction_text = """
+You are a focused Google Sheets assistant. You can list spreadsheets, inspect sheet metadata,
+read ranges, write/update ranges (with a JSON string), clear ranges, create spreadsheets, and add sheets (tabs).
+
+Rules:
+- Use A1 notation (e.g., 'Sheet1!A1:D10') when specifying explicit ranges.
+- For writing, pass `values_json` as a JSON-encoded 2D array, e.g. "[[\"Task\",\"Done\"],[\"Migrate\",\"Yes\"]]".
+- 'USER_ENTERED' respects formulas/locale; 'RAW' writes literal values.
+- Confirm actions with affected range or created IDs/URLs.
+""".strip()
+
+def build_agent():
+    return Agent(
+        model=MODEL,
+        name="google_sheets_agent",
+        description=(
+            "Google Sheets assistant for listing spreadsheets, reading/writing ranges, "
+            "clearing ranges, creating spreadsheets, and adding sheets. "
+            + sheets_agent_instruction_text
+        ),
+        generate_content_config=types.GenerateContentConfig(temperature=0.2),
+        tools=[
+            list_spreadsheets,
+            get_spreadsheet_info,
+            read_sheet_values,
+            write_sheet_values,
+            # If you have these in another module, import and add here; otherwise omit:
+            # clear_sheet_values,
+            # create_spreadsheet,
+            # create_sheet,
+        ],
+    )
+
+job_sheets_agent_instruction = """
+You take structured job results from the ATS Jobs Agent (output_key='jobs_result')
+and append them into the existing 'Job_search_Database' Google Sheet.
+""".strip()
+
+bigquery_storage_agent = Agent(
+    model=MODEL,
+    name="job_search_sheets_agent",
+    description=(
+        "Appends ATS job search results into the 'Job_search_Database' spreadsheet. "
+        + job_sheets_agent_instruction
+    ),
+    generate_content_config=types.GenerateContentConfig(temperature=0),
+    tools=[append_jobs_to_job_search_database],
+    output_key="spreadsheet",
+)
+
+__all__ = ["bigquery_storage_agent", "build_agent"]

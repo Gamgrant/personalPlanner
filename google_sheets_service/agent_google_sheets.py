@@ -3,185 +3,82 @@
 import os
 import os.path
 import json
-from typing import List
+from typing import List, Optional
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+
+from utils.google_service_helpers import get_google_service
 
 from google.adk.agents import Agent
 from google.genai import types
 
-MODEL = "gemini-2.5-flash"
+# Load the model name from environment variables if available. Defaults
+# to 'gemini-2.5-flash'. Centralizing model configuration allows you to
+# change the model across all agents via .env.
+
+MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.readonly",
 ]
 
-# -------------------------------
-# Auth bootstrap (same pattern as your Gmail agent)
-# -------------------------------
+# -------------------------------------------------------------------
+# Service constructors (delegated to utils.google_service_helpers)
+#
+# We rely on the centralized helper to build Google API services. The SCOPES
+# constant defined above specifies the scopes needed for both Sheets and the
+# Drive API calls used by this agent. When obtaining a Drive service for
+# listing spreadsheets, we pass these same scopes to get_google_service.
+
 def get_sheets_service():
     """Return an authenticated Google Sheets service (never None)."""
-    creds = None
-
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(current_dir, os.pardir))
-
-    credentials_rel = os.environ.get("GOOGLE_OAUTH_CLIENT_FILE")
-    token_rel       = os.environ.get("GOOGLE_OAUTH_TOKEN_FILE")
-
-    if not credentials_rel or not token_rel:
-        raise EnvironmentError(
-            "[SHEETS] Expected GOOGLE_OAUTH_CLIENT_FILE and GOOGLE_OAUTH_TOKEN_FILE env vars "
-            "(relative to project root)."
-        )
-
-    credentials_path = os.path.join(project_root, credentials_rel)
-    token_path       = os.path.join(project_root, token_rel)
-
-    print(f"[SHEETS] Looking for credentials at: {credentials_path}")
-    print(f"[SHEETS] Looking for token at: {token_path}")
-
-    # Load existing token AS-IS (don’t pass scopes) to avoid re-scoping
-    if os.path.exists(token_path):
-        try:
-            creds = Credentials.from_authorized_user_file(token_path)
-            print("[SHEETS] Existing token.json found and loaded.")
-        except (UnicodeDecodeError, ValueError):
-            print("[SHEETS] token.json invalid or corrupted. Re-authorizing…")
-            try:
-                os.remove(token_path)
-            except OSError:
-                pass
-            creds = None
-
-    # Refresh or run OAuth only if necessary
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            print("[SHEETS] Refreshing expired credentials…")
-            creds.refresh(Request())
-            with open(token_path, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
-                print("[SHEETS] Refreshed token.json saved.")
-        else:
-            if not os.path.exists(credentials_path):
-                raise FileNotFoundError(f"[SHEETS] Missing credentials.json at {credentials_path}")
-            print("[SHEETS] Launching browser for new Google OAuth flow…")
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
-            creds = flow.run_local_server(port=0)
-            os.makedirs(os.path.dirname(token_path), exist_ok=True)
-            with open(token_path, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
-                print("[SHEETS] New token.json created successfully.")
-
-    if creds is None:
-        raise RuntimeError("[SHEETS] No credentials available after auth flow/refresh.")
-
-    # Build the Sheets API client; never return None.
-    try:
-        service = build("sheets", "v4", credentials=creds, cache_discovery=False)
-    except Exception as e:
-        raise RuntimeError(f"[SHEETS] Failed to build Sheets service: {e}") from e
-
-    if service is None:
-        raise RuntimeError("[SHEETS] googleapiclient.discovery.build returned None.")
-
-    print("[SHEETS] Sheets service initialized successfully.")
-    return service
+    return get_google_service("sheets", "v4", SCOPES, "SHEETS")
 
 
 def get_drive_service():
     """Return an authenticated Drive service for listing spreadsheets."""
-    creds = None
-
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(current_dir, os.pardir))
-
-    credentials_rel = os.environ.get("GOOGLE_OAUTH_CLIENT_FILE")
-    token_rel       = os.environ.get("GOOGLE_OAUTH_TOKEN_FILE")
-
-    if not credentials_rel or not token_rel:
-        raise EnvironmentError(
-            "[SHEETS] Expected GOOGLE_OAUTH_CLIENT_FILE and GOOGLE_OAUTH_TOKEN_FILE env vars "
-            "(relative to project root)."
-        )
-
-    credentials_path = os.path.join(project_root, credentials_rel)
-    token_path       = os.path.join(project_root, token_rel)
-
-    print(f"[SHEETS/DRIVE] Looking for credentials at: {credentials_path}")
-    print(f"[SHEETS/DRIVE] Looking for token at: {token_path}")
-
-    if os.path.exists(token_path):
-        try:
-            creds = Credentials.from_authorized_user_file(token_path)
-            print("[SHEETS/DRIVE] Existing token.json found and loaded.")
-        except (UnicodeDecodeError, ValueError):
-            print("[SHEETS/DRIVE] token.json invalid or corrupted. Re-authorizing…")
-            try:
-                os.remove(token_path)
-            except OSError:
-                pass
-            creds = None
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            print("[SHEETS/DRIVE] Refreshing expired credentials…")
-            creds.refresh(Request())
-            with open(token_path, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
-                print("[SHEETS/DRIVE] Refreshed token.json saved.")
-        else:
-            if not os.path.exists(credentials_path):
-                raise FileNotFoundError(f"[SHEETS/DRIVE] Missing credentials.json at {credentials_path}")
-            print("[SHEETS/DRIVE] Launching browser for new Google OAuth flow…")
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
-            creds = flow.run_local_server(port=0)
-            os.makedirs(os.path.dirname(token_path), exist_ok=True)
-            with open(token_path, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
-                print("[SHEETS/DRIVE] New token.json created successfully.")
-
-    if creds is None:
-        raise RuntimeError("[SHEETS/DRIVE] No credentials available after auth flow/refresh.")
-
-    try:
-        service = build("drive", "v3", credentials=creds, cache_discovery=False)
-    except Exception as e:
-        raise RuntimeError(f"[SHEETS/DRIVE] Failed to build Drive service: {e}") from e
-
-    if service is None:
-        raise RuntimeError("[SHEETS/DRIVE] googleapiclient.discovery.build returned None.")
-
-    print("[SHEETS/DRIVE] Drive service initialized successfully.")
-    return service
+    return get_google_service("drive", "v3", SCOPES, "SHEETS/DRIVE")
 
 # -------------------------------
 # Tools (keep input types simple to avoid anyOf)
 # -------------------------------
-def list_spreadsheets(max_results: int = 25) -> List[str]:
-    """List spreadsheets the user can access (Drive)."""
+from typing import List, Optional  # make sure this line exists
+
+def list_spreadsheets(max_results: Optional[int] = None) -> List[str]:
+    """
+    List spreadsheets the user can access (Drive).
+    """
     drive = get_drive_service()
     try:
-        resp = drive.files().list(
-            q="mimeType='application/vnd.google-apps.spreadsheet'",
-            pageSize=max_results,
-            fields="files(id,name,modifiedTime,webViewLink)",
-            orderBy="modifiedTime desc",
-        ).execute()
-        files = resp.get("files", []) or []
+        files = []
+        page_token = None
+        while True:
+            params = {
+                "q": "mimeType='application/vnd.google-apps.spreadsheet'",
+                "pageSize": 1000,
+                "fields": "nextPageToken, files(id,name,modifiedTime,webViewLink)",
+                "supportsAllDrives": True,
+                "includeItemsFromAllDrives": True,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+
+            resp = drive.files().list(**params).execute()
+            files.extend(resp.get("files", []))
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+
         if not files:
             return ["No spreadsheets found."]
         return [
-            f"{f.get('name','(untitled)')} — ID: {f.get('id')} — Modified: {f.get('modifiedTime','?')} — Link: {f.get('webViewLink','-')}"
+            f"{f['name']} — ID: {f['id']} — Modified: {f.get('modifiedTime','?')} — Link: {f.get('webViewLink','-')}"
             for f in files
         ]
     except HttpError as e:
-        raise ValueError(f"Failed to list spreadsheets: {str(e)}")
+        raise ValueError(f"Failed to list spreadsheets: {e}")
+
 
 
 def get_spreadsheet_info(spreadsheet_id: str) -> str:
@@ -206,7 +103,21 @@ def get_spreadsheet_info(spreadsheet_id: str) -> str:
 
 
 def read_sheet_values(spreadsheet_id: str, range_name: str = "A1:Z1000") -> List[str]:
-    """Read values in a range. Returns up to first 50 rows as formatted lines."""
+    """
+    Read all values in a range and return each row as a formatted string.
+
+    The Google Sheets API does not impose a limit on the number of rows returned.
+    This implementation returns every row without truncation.
+
+    Args:
+        spreadsheet_id: The ID of the spreadsheet to read from.
+        range_name: The A1-notation range to retrieve (e.g., "Sheet1!A1:Z1000").
+
+    Returns:
+        A list of strings, one per row, with values padded to the width of
+        the first row.  If the range is empty, a single-item list is returned
+        describing the lack of data.
+    """
     sheets = get_sheets_service()
     try:
         result = sheets.spreadsheets().values().get(
@@ -216,12 +127,10 @@ def read_sheet_values(spreadsheet_id: str, range_name: str = "A1:Z1000") -> List
         if not values:
             return [f"No data found in range '{range_name}'."]
         base_len = len(values[0])
-        lines = []
-        for i, row in enumerate(values[:50], 1):
+        lines: List[str] = []
+        for i, row in enumerate(values, 1):
             padded = row + [""] * max(0, base_len - len(row))
             lines.append(f"Row {i:2d}: {padded}")
-        if len(values) > 50:
-            lines.append(f"... and {len(values) - 50} more rows")
         return lines
     except HttpError as e:
         raise ValueError(f"Failed to read values: {str(e)}")
@@ -312,8 +221,7 @@ Rules:
 """.strip()
 
 
-def build_agent():
-    return Agent(
+google_sheets_agent : Agent = Agent(
         model=MODEL,
         name="google_sheets_agent",
         description=(
@@ -332,3 +240,5 @@ def build_agent():
             create_sheet,
         ],
     )
+
+__all__ = ["google_sheets_agent"]

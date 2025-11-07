@@ -7,19 +7,15 @@ It can:
 - Upload new files (text or from URL)
 - Check sharing permissions
 - Retrieve file modification timestamps
+- Recursively traverse folders
 """
 
 import os
 import io
-import json
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Dict
 
 from tzlocal import get_localzone
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from googleapiclient.errors import HttpError
 
@@ -28,8 +24,11 @@ from google.genai import types
 
 import httpx
 
-MODEL = "gemini-2.5-flash"
+from utils.google_service_helpers import get_google_service
 
+MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
+
+# Full read/write + listing scopes
 SCOPES = [
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/drive.file",
@@ -38,95 +37,147 @@ SCOPES = [
 # ------------------------------------------
 # Auth Bootstrap
 # ------------------------------------------
-def get_drive_service():
-    """Authenticate and return a Google Drive service."""
-    creds = None
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(current_dir, os.pardir))
-
-    credentials_rel = os.environ.get("GOOGLE_OAUTH_CLIENT_FILE")
-    token_rel = os.environ.get("GOOGLE_OAUTH_TOKEN_FILE")
-
-    if not credentials_rel or not token_rel:
-        raise EnvironmentError(
-            "[DRIVE] Expected GOOGLE_OAUTH_CLIENT_FILE and GOOGLE_OAUTH_TOKEN_FILE env vars "
-            "(relative to project root)."
-        )
-
-    credentials_path = os.path.join(project_root, credentials_rel)
-    token_path = os.path.join(project_root, token_rel)
-
-    print(f"[DRIVE] Looking for credentials at: {credentials_path}")
-    print(f"[DRIVE] Looking for token at: {token_path}")
-
-    if os.path.exists(token_path):
-        try:
-            creds = Credentials.from_authorized_user_file(token_path)
-            print("[DRIVE] Existing token.json loaded.")
-        except (UnicodeDecodeError, ValueError):
-            print("[DRIVE] token.json invalid. Re-authorizing…")
-            try:
-                os.remove(token_path)
-            except OSError:
-                pass
-            creds = None
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            print("[DRIVE] Refreshing expired credentials…")
-            creds.refresh(Request())
-            with open(token_path, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
-        else:
-            if not os.path.exists(credentials_path):
-                raise FileNotFoundError(f"[DRIVE] Missing credentials.json at {credentials_path}")
-            print("[DRIVE] Launching browser for new OAuth flow…")
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
-            creds = flow.run_local_server(port=0)
-            os.makedirs(os.path.dirname(token_path), exist_ok=True)
-            with open(token_path, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
-
-    if creds is None:
-        raise RuntimeError("[DRIVE] No credentials available after auth flow/refresh.")
-
-    try:
-        service = build("drive", "v3", credentials=creds, cache_discovery=False)
-    except Exception as e:
-        raise RuntimeError(f"[DRIVE] Failed to build Drive service: {e}") from e
-
-    print("[DRIVE] Drive service initialized successfully.")
-    return service
-
+def get_drive_service() -> object:
+    """Return an authenticated Google Drive service."""
+    return get_google_service("drive", "v3", SCOPES, "DRIVE")
 
 # ------------------------------------------
-# Tools
+# Internal helpers
 # ------------------------------------------
-def list_drive_files(max_results: int = 20) -> List[str]:
-    """List recent non-trashed files from Google Drive."""
+def _paginate_files(drive, q: str, page_size: int = 1000) -> List[Dict]:
+    """Fetch ALL matching files across all drives."""
+    items: List[Dict] = []
+    page_token = None
+    while True:
+        params = {
+            "q": q,
+            "fields": "nextPageToken, files(id,name,mimeType,modifiedTime,webViewLink,parents)",
+            "supportsAllDrives": True,
+            "includeItemsFromAllDrives": True,
+            "pageSize": page_size,
+            "orderBy": "modifiedTime desc",
+            "corpora": "allDrives",   # <-- key to see everything you can access
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        resp = drive.files().list(**params).execute()
+        items.extend(resp.get("files", []) or [])
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+    return items
+
+# ------------------------------------------
+# Tools (AFC-friendly: no unions/Optionals)
+# ------------------------------------------
+def list_drive_files(max_results: int = 0, folder_id: str = "", mime_type: str = "") -> List[str]:
+    """
+    List files/folders across all drives. If folder_id is provided, list direct
+    children of that folder. If mime_type is provided, filter by that type.
+      - max_results: 0 means unlimited.
+      - folder_id: "" means search globally.
+      - mime_type: "" means any type; e.g. 'application/vnd.google-apps.folder' for folders.
+    """
     drive = get_drive_service()
     try:
-        results = (
-            drive.files()
-            .list(
-                pageSize=max_results,
-                fields="files(id, name, mimeType, modifiedTime, webViewLink)",
-                q="trashed=false",
-                orderBy="modifiedTime desc",
-            )
-            .execute()
-        )
-        files = results.get("files", [])
-        if not files:
+        q_parts = ["trashed=false"]
+        if folder_id:
+            q_parts.append(f"'{folder_id}' in parents")
+        if mime_type:
+            q_parts.append(f"mimeType='{mime_type}'")
+        items = _paginate_files(drive, " and ".join(q_parts))
+
+        if max_results > 0:
+            items = items[:max_results]
+
+        if not items:
             return ["No files found in Drive."]
         return [
             f"{f.get('name','(untitled)')} — ID: {f['id']} — Type: {f['mimeType']} — "
             f"Modified: {f.get('modifiedTime','?')} — Link: {f.get('webViewLink','-')}"
-            for f in files
+            for f in items
         ]
     except HttpError as e:
         raise ValueError(f"Failed to list Drive files: {e}")
 
+def list_drive_folders(max_results: int = 0, folder_id: str = "") -> List[str]:
+    """List folders (optionally inside a specific parent folder)."""
+    folder_mime = "application/vnd.google-apps.folder"
+    return list_drive_files(max_results=max_results, folder_id=folder_id, mime_type=folder_mime)
+
+def list_drive_files_recursive(start_folder_id: str, max_results: int = 0, mime_type: str = "") -> List[str]:
+    """
+    Recursively traverse folders starting at start_folder_id and list all matching items.
+      - start_folder_id: required
+      - max_results: 0 = unlimited
+      - mime_type: "" = any; e.g., folder mime to list only folders
+    """
+    if not start_folder_id:
+        return ["start_folder_id is required."]
+
+    drive = get_drive_service()
+    try:
+        results: List[Dict] = []
+        queue: List[str] = [start_folder_id]
+        folder_mime = "application/vnd.google-apps.folder"
+
+        while queue:
+            parent = queue.pop(0)
+            q_parts = [f"'{parent}' in parents", "trashed=false"]
+            if mime_type:
+                q_parts.append(f"mimeType='{mime_type}'")
+            children = _paginate_files(drive, " and ".join(q_parts))
+            results.extend(children)
+
+            # Always discover subfolders to recurse deeper
+            subfolders = [c for c in children if c.get("mimeType") == folder_mime]
+            queue.extend([sf["id"] for sf in subfolders])
+
+            if max_results > 0 and len(results) >= max_results:
+                results = results[:max_results]
+                break
+
+        if not results:
+            return [f"No items found under folder {start_folder_id}."]
+        return [
+            f"{f.get('name','(untitled)')} — ID: {f['id']} — Type: {f['mimeType']} — "
+            f"Modified: {f.get('modifiedTime','?')} — Link: {f.get('webViewLink','-')}"
+            for f in results
+        ]
+    except HttpError as e:
+        raise ValueError(f"Failed to recursively list Drive files: {e}")
+
+def find_drive_items_by_name(name: str, exact: bool = True, mime_type: str = "", in_folder_id: str = "") -> List[str]:
+    """
+    Search by name (exact or contains). Optionally filter by mime_type or restrict to a folder.
+      - exact=True uses name = '...'
+      - exact=False uses name contains '...'
+    """
+    if not name:
+        return ["name is required."]
+
+    drive = get_drive_service()
+    try:
+        q_parts = ["trashed=false"]
+        if in_folder_id:
+            q_parts.append(f"'{in_folder_id}' in parents")
+        if mime_type:
+            q_parts.append(f"mimeType='{mime_type}'")
+        if exact:
+            q_parts.append(f"name = '{name}'")
+        else:
+            q_parts.append(f"name contains '{name}'")
+
+        items = _paginate_files(drive, " and ".join(q_parts))
+        if not items:
+            return [f"No items found matching name: {name}"]
+        return [
+            f"{f.get('name','(untitled)')} — ID: {f['id']} — Type: {f['mimeType']} — "
+            f"Modified: {f.get('modifiedTime','?')} — Link: {f.get('webViewLink','-')}"
+            for f in items
+        ]
+    except HttpError as e:
+        raise ValueError(f"Failed to search by name: {e}")
 
 def get_drive_file_content(file_id: str) -> str:
     """Download file content as text, if possible."""
@@ -150,7 +201,7 @@ def get_drive_file_content(file_id: str) -> str:
         downloader = MediaIoBaseDownload(fh, request)
         done = False
         while not done:
-            status, done = downloader.next_chunk()
+            _, done = downloader.next_chunk()
 
         content = fh.getvalue()
         try:
@@ -162,8 +213,7 @@ def get_drive_file_content(file_id: str) -> str:
     except HttpError as e:
         raise ValueError(f"Failed to read Drive file: {e}")
 
-
-def create_drive_file(file_name: str, content: Optional[str] = None, folder_id: str = "root") -> str:
+def create_drive_file(file_name: str, content: str = "", folder_id: str = "root") -> str:
     """Create a text file in Google Drive."""
     drive = get_drive_service()
     try:
@@ -186,7 +236,6 @@ def create_drive_file(file_name: str, content: Optional[str] = None, folder_id: 
     except HttpError as e:
         raise ValueError(f"Failed to create Drive file: {e}")
 
-
 def upload_drive_file_from_url(url: str, file_name: str, folder_id: str = "root") -> str:
     """Download a file from URL and upload to Google Drive."""
     drive = get_drive_service()
@@ -202,13 +251,12 @@ def upload_drive_file_from_url(url: str, file_name: str, folder_id: str = "root"
 
         file = (
             drive.files()
-            .create(body=metadata, media_body=media, fields="id, name, webViewLink")
+            .create(body=metadata, media_body=media, fields="id, name, webViewLink", supportsAllDrives=True)
             .execute()
         )
         return f"Uploaded '{file_name}' from URL — ID: {file['id']} — Link: {file['webViewLink']}"
     except Exception as e:
         raise ValueError(f"Failed to upload file from URL: {e}")
-
 
 def get_drive_file_permissions(file_id: str) -> str:
     """Check file permissions and sharing status."""
@@ -240,11 +288,8 @@ def get_drive_file_permissions(file_id: str) -> str:
     except HttpError as e:
         raise ValueError(f"Failed to get permissions: {e}")
 
-
 def get_drive_file_modified_time(file_id: str) -> dict:
-    """
-    Retrieve structured last-modified timestamp of a Drive file.
-    """
+    """Retrieve structured last-modified timestamp of a Drive file."""
     drive = get_drive_service()
     try:
         meta = drive.files().get(
@@ -258,7 +303,7 @@ def get_drive_file_modified_time(file_id: str) -> dict:
 
         modified_dt = datetime.fromisoformat(modified_str.replace("Z", "+00:00"))
         local_tz = get_localzone()
-        modified_local = modified_dt.astimezone(local_tz)
+        modified_local = modified_dt.asctime if False else modified_dt.astimezone(local_tz)
 
         return {
             "file_id": file_id,
@@ -269,50 +314,50 @@ def get_drive_file_modified_time(file_id: str) -> dict:
             "time": modified_local.strftime("%H:%M:%S"),
             "weekday": modified_local.strftime("%A"),
             "timezone": str(local_tz),
-            "summary": modified_local.strftime(
-                "Last modified on %A, %b %d %Y at %I:%M %p %Z"
-            ),
+            "summary": modified_local.strftime("Last modified on %A, %b %d %Y at %I:%M %p %Z"),
             "link": meta.get("webViewLink"),
         }
     except HttpError as e:
         raise ValueError(f"Failed to retrieve modified time: {e}")
-
 
 # ------------------------------------------
 # Agent Definition
 # ------------------------------------------
 drive_agent_instruction_text = """
 You are a Google Drive assistant. You can:
-- List files and folders
+- List files and folders (across all drives)
 - Read file contents
 - Upload or create new files
 - Check sharing permissions
 - Retrieve modification times for Drive files
+- Recursively traverse a folder tree
 
 Rules:
-- Use file IDs from list_drive_files().
+- Use file IDs from list_drive_files()/find_drive_items_by_name().
 - Never expose credentials.
 - Keep text responses concise.
-- If you can't find the exact file, find the most similar one and confirm with the orchestrator.
+- If a query is ambiguous, list the closest matches and ask which one to use.
 """.strip()
 
+google_drive_agent: Agent = Agent(
+    model=MODEL,
+    name="google_drive_agent",
+    description=(
+        "Google Drive assistant for listing, reading, uploading, and managing Drive files. "
+        + drive_agent_instruction_text
+    ),
+    generate_content_config=types.GenerateContentConfig(temperature=0.2),
+    tools=[
+        list_drive_files,
+        list_drive_folders,
+        list_drive_files_recursive,
+        find_drive_items_by_name,
+        get_drive_file_content,
+        create_drive_file,
+        upload_drive_file_from_url,
+        get_drive_file_permissions,
+        get_drive_file_modified_time,
+    ],
+)
 
-def build_agent():
-    """Return the Google Drive Agent."""
-    return Agent(
-        model=MODEL,
-        name="google_drive_agent",
-        description=(
-            "Google Drive assistant for listing, reading, uploading, and managing Drive files. "
-            + drive_agent_instruction_text
-        ),
-        generate_content_config=types.GenerateContentConfig(temperature=0.2),
-        tools=[
-            list_drive_files,
-            get_drive_file_content,
-            create_drive_file,
-            upload_drive_file_from_url,
-            get_drive_file_permissions,
-            get_drive_file_modified_time,  # <-- Added new tool
-        ],
-    )
+__all__ = ["google_drive_agent"]

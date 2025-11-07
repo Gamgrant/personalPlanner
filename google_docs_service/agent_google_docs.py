@@ -5,16 +5,23 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from tzlocal import get_localzone
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
+# Import centralized time utilities. We use get_time_context to obtain
+# current time data in a unified way across all modules. This allows
+# consistent timezone handling and formatting throughout the project.
+from utils.time_utils import get_time_context
+
 from googleapiclient.errors import HttpError
 
 from google.adk.agents import Agent
 from google.genai import types
 
-MODEL = "gemini-2.5-flash"
+# Import centralized helper for Google API authentication and service construction.
+from utils.google_service_helpers import get_google_service
+
+# Load the model name from environment variables if available. Defaults to
+# 'gemini-2.5-flash' when not provided. Centralizing this variable allows
+# configuration via .env without editing code in multiple places.
+MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
 
 SCOPES = [
     "https://www.googleapis.com/auth/documents",
@@ -24,146 +31,73 @@ SCOPES = [
 # ------------------------------------------
 # Auth Bootstrap
 # ------------------------------------------
-def get_docs_service():
-    """Return an authenticated Google Docs service (never None)."""
-    creds = None
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(current_dir, os.pardir))
+def get_docs_service() -> object:
+    """
+    Return an authenticated Google Docs service.
 
-    credentials_rel = os.environ.get("GOOGLE_OAUTH_CLIENT_FILE")
-    token_rel = os.environ.get("GOOGLE_OAUTH_TOKEN_FILE")
-
-    if not credentials_rel or not token_rel:
-        raise EnvironmentError(
-            "[DOCS] Expected GOOGLE_OAUTH_CLIENT_FILE and GOOGLE_OAUTH_TOKEN_FILE env vars "
-            "(relative to project root)."
-        )
-
-    credentials_path = os.path.join(project_root, credentials_rel)
-    token_path = os.path.join(project_root, token_rel)
-
-    print(f"[DOCS] Looking for credentials at: {credentials_path}")
-    print(f"[DOCS] Looking for token at: {token_path}")
-
-    if os.path.exists(token_path):
-        try:
-            creds = Credentials.from_authorized_user_file(token_path)
-            print("[DOCS] Existing token.json loaded.")
-        except (UnicodeDecodeError, ValueError):
-            print("[DOCS] token.json invalid. Re-authorizing…")
-            try:
-                os.remove(token_path)
-            except OSError:
-                pass
-            creds = None
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            print("[DOCS] Refreshing expired credentials…")
-            creds.refresh(Request())
-            with open(token_path, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
-                print("[DOCS] Refreshed token.json saved.")
-        else:
-            if not os.path.exists(credentials_path):
-                raise FileNotFoundError(f"[DOCS] Missing credentials.json at {credentials_path}")
-            print("[DOCS] Launching browser for new Google OAuth flow…")
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
-            creds = flow.run_local_server(port=0)
-            os.makedirs(os.path.dirname(token_path), exist_ok=True)
-            with open(token_path, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
-                print("[DOCS] New token.json created successfully.")
-
-    if creds is None:
-        raise RuntimeError("[DOCS] No credentials available after auth flow/refresh.")
-
-    try:
-        service = build("docs", "v1", credentials=creds, cache_discovery=False)
-    except Exception as e:
-        raise RuntimeError(f"[DOCS] Failed to build Docs service: {e}") from e
-
-    print("[DOCS] Docs service initialized successfully.")
-    return service
+    This function delegates credential handling to the centralized helper
+    defined in utils.google_service_helpers. By using get_google_service,
+    we avoid duplicating OAuth flow logic here. The SCOPES constant
+    specifies the permissions needed for Docs operations.
+    """
+    return get_google_service("docs", "v1", SCOPES, "DOCS")
 
 
-def get_drive_service():
-    """Return an authenticated Drive service for listing Docs."""
-    creds = None
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(current_dir, os.pardir))
-
-    credentials_rel = os.environ.get("GOOGLE_OAUTH_CLIENT_FILE")
-    token_rel = os.environ.get("GOOGLE_OAUTH_TOKEN_FILE")
-
-    if not credentials_rel or not token_rel:
-        raise EnvironmentError(
-            "[DOCS/DRIVE] Expected GOOGLE_OAUTH_CLIENT_FILE and GOOGLE_OAUTH_TOKEN_FILE env vars "
-            "(relative to project root)."
-        )
-
-    credentials_path = os.path.join(project_root, credentials_rel)
-    token_path = os.path.join(project_root, token_rel)
-
-    print(f"[DOCS/DRIVE] Looking for credentials at: {credentials_path}")
-    print(f"[DOCS/DRIVE] Looking for token at: {token_path}")
-
-    if os.path.exists(token_path):
-        try:
-            creds = Credentials.from_authorized_user_file(token_path)
-            print("[DOCS/DRIVE] Existing token.json loaded.")
-        except (UnicodeDecodeError, ValueError):
-            print("[DOCS/DRIVE] token.json invalid. Re-authorizing…")
-            try:
-                os.remove(token_path)
-            except OSError:
-                pass
-            creds = None
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            print("[DOCS/DRIVE] Refreshing expired credentials…")
-            creds.refresh(Request())
-            with open(token_path, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
-                print("[DOCS/DRIVE] Refreshed token.json saved.")
-        else:
-            if not os.path.exists(credentials_path):
-                raise FileNotFoundError(f"[DOCS/DRIVE] Missing credentials.json at {credentials_path}")
-            print("[DOCS/DRIVE] Launching browser for new Google OAuth flow…")
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
-            creds = flow.run_local_server(port=0)
-            os.makedirs(os.path.dirname(token_path), exist_ok=True)
-            with open(token_path, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
-                print("[DOCS/DRIVE] New token.json created successfully.")
-
-    if creds is None:
-        raise RuntimeError("[DOCS/DRIVE] No credentials available after auth flow/refresh.")
-
-    try:
-        service = build("drive", "v3", credentials=creds, cache_discovery=False)
-    except Exception as e:
-        raise RuntimeError(f"[DOCS/DRIVE] Failed to build Drive service: {e}") from e
-
-    print("[DOCS/DRIVE] Drive service initialized successfully.")
-    return service
+def get_drive_service() -> object:
+    """
+    Return an authenticated Google Drive service with the same scopes
+    used for Docs. This is used to list and retrieve documents from
+    Google Drive when the user asks to view or search for Docs files.
+    """
+    return get_google_service("drive", "v3", SCOPES, "DOCS/DRIVE")
 
 
 # ------------------------------------------
 # Tools
 # ------------------------------------------
-def list_docs(max_results: int = 25) -> List[str]:
-    """List Google Docs files accessible to the user."""
+def list_docs(max_results: int | None = None) -> List[str]:
+    """
+    List Google Docs files accessible to the user.
+
+    This function retrieves all documents by paging through the Drive API
+    rather than limiting to a fixed number of results.  If
+    ``max_results`` is provided and positive, at most that many
+    documents are returned; otherwise, all documents are returned.
+
+    Args:
+        max_results: Optional maximum number of documents to return.  If
+            ``None`` or <= 0, the function returns every document.
+
+    Returns:
+        A list of formatted strings describing each document.
+    """
     drive = get_drive_service()
     try:
-        resp = drive.files().list(
-            q="mimeType='application/vnd.google-apps.document' and trashed=false",
-            pageSize=max_results,
-            fields="files(id,name,modifiedTime,webViewLink)",
-            orderBy="modifiedTime desc",
-        ).execute()
-        files = resp.get("files", []) or []
+        files: List[dict] = []
+        page_token: str | None = None
+        while True:
+            page_size = 1000
+            if max_results and max_results > 0:
+                remaining = max_results - len(files)
+                if remaining <= 0:
+                    break
+                page_size = min(page_size, remaining)
+            params = {
+                "q": "mimeType='application/vnd.google-apps.document' and trashed=false",
+                "fields": "nextPageToken, files(id,name,modifiedTime,webViewLink)",
+                "orderBy": "modifiedTime desc",
+                "pageSize": page_size,
+                # Include documents from shared drives and shared resources
+                "supportsAllDrives": True,
+                "includeItemsFromAllDrives": True,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            resp = drive.files().list(**params).execute()
+            files.extend(resp.get("files", []) or [])
+            page_token = resp.get("nextPageToken")
+            if not page_token or (max_results and max_results > 0 and len(files) >= max_results):
+                break
         if not files:
             return ["No Google Docs found."]
         return [
@@ -257,21 +191,33 @@ def get_doc_modified_time(document_id: str) -> dict:
 # Time Context Tool
 # ------------------------------------------
 def make_time_context(preferred_tz: Optional[str] = None) -> dict:
-    """Return structured current time context."""
-    try:
-        tz = ZoneInfo(preferred_tz) if preferred_tz else ZoneInfo(str(get_localzone()))
-    except Exception:
-        tz = ZoneInfo("America/New_York")
+    """
+    Return structured current time context.
 
-    now = datetime.now(tz)
-    return {
-        "datetime": now.isoformat(),
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M:%S"),
-        "weekday": now.strftime("%A"),
-        "timezone": str(tz),
-        "summary": now.strftime("%A, %b %d %Y, %I:%M %p %Z"),
-    }
+    This wrapper calls utils.time_utils.get_time_context to obtain a base
+    dictionary containing date/time components. It then adds a human-readable
+    summary and returns the enhanced context. By reusing get_time_context,
+    we ensure consistent timezone handling across all agents.
+
+    Args:
+        preferred_tz: Optional IANA timezone string. If provided, the
+            context is based on that timezone. Otherwise, the local
+            timezone is used.
+
+    Returns:
+        A dictionary containing ISO timestamp, date, time, weekday,
+        timezone, UTC offset, and a formatted summary string.
+    """
+    ctx = get_time_context(preferred_tz)
+    # Compute a summary in the format "Weekday, Month Day Year, HH:MM AM TZ".
+    try:
+        dt = datetime.fromisoformat(ctx["datetime"])
+        summary = dt.strftime("%A, %b %d %Y, %I:%M %p %Z")
+    except Exception:
+        # Fallback: build summary from individual context fields
+        summary = f"{ctx.get('weekday', '')}, {ctx.get('date', '')} {ctx.get('time', '')} {ctx.get('timezone', '')}"
+    ctx["summary"] = summary
+    return ctx
 
 
 # ------------------------------------------
@@ -292,8 +238,7 @@ Rules:
 """.strip()
 
 
-def build_agent():
-    return Agent(
+google_docs_agent: Agent  = Agent(
         model=MODEL,
         name="google_docs_agent",
         description=(
@@ -310,3 +255,4 @@ def build_agent():
             get_doc_modified_time,
         ],
     )
+__all__ = ["google_docs_agent"]

@@ -1,5 +1,5 @@
 import datetime
-import os.path
+import os
 import re
 from dateutil import parser as dateutil_parser
 import dateparser
@@ -7,15 +7,25 @@ import pytz
 from tzlocal import get_localzone
 from typing import Optional
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from google.adk.agents import Agent
 from google.genai import types
 
-MODEL = "gemini-2.5-flash"
+# Import centralized helper for Google API authentication and service construction.
+from utils.google_service_helpers import get_google_service
+
+# Import centralized time utilities for consistent time handling across modules.
+from utils.time_utils import ensure_rfc3339, get_time_context
+
+# Load the model name from environment variables if available. Defaults to
+# 'gemini-2.5-flash' for backward compatibility. Using os.environ ensures
+# that a single value can be set in .env and reused throughout the project.
+MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
+
+# OAuth scopes required for Calendar operations. These are passed to
+# utils.google_service_helpers.get_google_service when constructing the
+# Calendar service. If additional scopes are ever needed (e.g., to
+# manage other resources), add them here.
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 
@@ -23,78 +33,27 @@ SCOPES = ["https://www.googleapis.com/auth/calendar"]
 #  Google Calendar Authentication
 # =====================================================
 
-def get_calendar_service():
-    """Returns an authenticated Google Calendar service instance."""
-    creds = None
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(current_dir, os.pardir))
+def get_calendar_service() -> object:
+    """
+    Return an authenticated Google Calendar service.
 
-    credentials_rel = os.environ.get("GOOGLE_OAUTH_CLIENT_FILE")
-    token_rel = os.environ.get("GOOGLE_OAUTH_TOKEN_FILE")
-
-    credentials_path = os.path.join(project_root, credentials_rel)
-    token_path = os.path.join(project_root, token_rel)
-
-    print(f"Looking for credentials at: {credentials_path}")
-    print(f"Looking for token at: {token_path}")
-
-    if os.path.exists(token_path):
-        try:
-            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
-            print("Existing token.json found and loaded.")
-        except (UnicodeDecodeError, ValueError):
-            print("Warning: token.json is invalid or corrupted. Re-authorizing...")
-            try:
-                os.remove(token_path)
-            except OSError:
-                pass
-            creds = None
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            print("Refreshing expired credentials...")
-            creds.refresh(Request())
-            with open(token_path, "w", encoding="utf-8") as token_file:
-                token_file.write(creds.to_json())
-                print("Refreshed token.json saved.")
-        else:
-            if not os.path.exists(credentials_path):
-                raise FileNotFoundError(f"Missing credentials.json at {credentials_path}")
-            print("Launching browser for new Google OAuth flow...")
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
-            creds = flow.run_local_server(port=0)
-            os.makedirs(os.path.dirname(token_path), exist_ok=True)
-            with open(token_path, "w", encoding="utf-8") as token_file:
-                token_file.write(creds.to_json())
-                print("New token.json created successfully.")
-
-    print("Google Calendar service initialized successfully.")
-    return build("calendar", "v3", credentials=creds)
+    This function delegates authentication and service construction to the
+    centralized helper defined in utils.google_service_helpers. By centralizing
+    this logic, we avoid duplicating credential loading and OAuth flows in
+    multiple modules. The helper internally calls utils.routing.ensure_google_oauth_env
+    to make sure environment variables point to the shared .cred folder, so
+    credentials_rel and token_rel environment variables may be relative or
+    absolute. See utils/google_service_helpers.py for details.
+    """
+    return get_google_service("calendar", "v3", SCOPES, "CALENDAR")
 
 
 # =====================================================
 #  Utility
 # =====================================================
 
-def _ensure_rfc3339(dt_str: Optional[str], tz=None) -> str:
-    """Ensure a datetime string is RFC3339 with timezone info."""
-    tz = tz or get_localzone()
-    if not dt_str:
-        return datetime.datetime.now(tz).isoformat()
-
-    try:
-        dt = datetime.datetime.fromisoformat(str(dt_str))
-        if dt.tzinfo is None:
-            dt = tz.localize(dt) if hasattr(tz, "localize") else dt.replace(tzinfo=tz)
-        return dt.isoformat()
-    except Exception:
-        pass
-
-    try:
-        dt = datetime.datetime.strptime(str(dt_str), "%Y-%m-%d").astimezone(tz)
-        return dt.isoformat()
-    except Exception:
-        return datetime.datetime.now(tz).isoformat()
+# Note: The local implementation of _ensure_rfc3339 has been removed. Use
+# utils.time_utils.ensure_rfc3339 instead. See search_events below for usage.
 
 
 # =====================================================
@@ -105,22 +64,26 @@ def search_events(
     query: Optional[str] = None,
     time_min: Optional[str] = None,
     time_max: Optional[str] = None,
-    max_results: int = 10,
+    max_results: int | None = None,
     calendar_id: str = "primary"
 ) -> list[str]:
     service = get_calendar_service()
     tz = get_localzone()
-    time_min = _ensure_rfc3339(time_min, tz)
-    time_max = _ensure_rfc3339(time_max, tz)
+    # Use the centralized ensure_rfc3339 helper for consistent formatting.
+    time_min = ensure_rfc3339(time_min, tz)
+    time_max = ensure_rfc3339(time_max, tz)
 
     params = {
         "calendarId": calendar_id,
-        "maxResults": max_results,
         "singleEvents": True,
         "orderBy": "startTime",
         "timeMin": time_min,
         "timeMax": time_max,
     }
+    # Only include maxResults if provided and positive.  When omitted, the
+    # Calendar API defaults to returning up to 250 events.
+    if max_results and max_results > 0:
+        params["maxResults"] = max_results
     if query:
         params["q"] = query
 
@@ -336,7 +299,17 @@ def delete_event(event_id: str, calendar_id: str = "primary", send_updates: str 
         raise ValueError(f"Failed to delete event: {str(error)}")
 
 
-def list_events(max_results: int = 10) -> list[str]:
+def list_events(max_results: int | None = None) -> list[str]:
+    """
+    List upcoming events starting from now.
+
+    Args:
+        max_results: Optional maximum number of events to return. If None or
+            non-positive, the Calendar API defaults to returning up to 250 events.
+
+    Returns:
+        A list of formatted event descriptions.
+    """
     now = datetime.datetime.now(tz=pytz.UTC).isoformat()
     return search_events(time_min=now, max_results=max_results)
 
@@ -388,22 +361,20 @@ def suggest_meeting_times(date_string: str, duration: Optional[str] = "1 hour",
 
 from zoneinfo import ZoneInfo
 
+# --------------------------------------------------------------------
+# Time context helper
+# --------------------------------------------------------------------
+
 def make_time_context(preferred_tz: Optional[str] = None) -> dict:
-    try:
-        tz = ZoneInfo(preferred_tz) if preferred_tz else get_localzone()
-    except Exception:
-        tz = ZoneInfo("America/New_York")
-    now = datetime.datetime.now(tz)
-    return {
-        "datetime": now.isoformat(),
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M:%S"),
-        "weekday": now.strftime("%A"),
-        "timezone": str(tz),
-        "utc_offset": now.strftime("%z"),
-        "summary": now.strftime("%A, %b %d %Y, %I:%M %p %Z"),
-        "cutoff_iso_local": now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat(),
-    }
+    """
+    Alias for utils.time_utils.get_time_context.
+
+    This wrapper preserves the original API while delegating to the
+    centralized helper. Callers can continue using make_time_context
+    without modification, and the returned dictionary remains
+    backwards-compatible.
+    """
+    return get_time_context(preferred_tz)
 
 
 calendar_agent_instruction_text = """
@@ -418,27 +389,29 @@ def get_user_timezone(session=None):
     return str(get_localzone())
 
 
-def build_agent():
-    return Agent(
-        model=MODEL,
-        name="google_calendar_agent",
-        description=(
-            "An AI assistant that manages your Google Calendar using natural language, including creating, "
-            "updating, deleting, searching, and suggesting meeting times in your local time zone. "
-            "Use make_time_context if user asks about day/date/time."
-            + calendar_agent_instruction_text
-        ),
-        generate_content_config=types.GenerateContentConfig(temperature=0.2),
-        tools=[
-            nl_datetime_to_iso,
-            parse_recurrence,
-            create_event,
-            get_event,
-            update_event,
-            delete_event,
-            search_events,
-            list_events,
-            suggest_meeting_times,
-            make_time_context,
-        ],
-    )
+calendar_agent: Agent = Agent(
+    model=MODEL,
+    name="google_calendar_agent",
+    description=(
+        "An AI assistant that manages your Google Calendar using natural language, including creating, "
+        "updating, deleting, searching, and suggesting meeting times in your local time zone. "
+        "Use make_time_context if user asks about day/date/time."
+        + calendar_agent_instruction_text
+    ),
+    generate_content_config=types.GenerateContentConfig(temperature=0.2),
+    tools=[
+        nl_datetime_to_iso,
+        parse_recurrence,
+        create_event,
+        get_event,
+        update_event,
+        delete_event,
+        search_events,
+        list_events,
+        suggest_meeting_times,
+        make_time_context,
+    ],
+)
+
+# Optional: make the public API explicit
+__all__ = ["calendar_agent"]

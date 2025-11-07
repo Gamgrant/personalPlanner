@@ -3,73 +3,61 @@ import base64
 import re
 import mimetypes
 import io
-from typing import Optional, List
+from typing import Optional, List, Any, Dict
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from tzlocal import get_localzone
 from email.message import EmailMessage
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload
 
 from google.adk.agents import Agent
 from google.genai import types
 
-MODEL = "gemini-2.5-flash"
+# Import Gmail and Drive service helpers. These wrappers return
+# authenticated services using centralized credential handling in
+# utils.google_service_helpers.
+from utils.google_service_helpers import (
+    get_gmail_service as _get_gmail_service,
+    get_gmail_drive_service as _get_gmail_drive_service,
+)
+
+# Import centralized time helper to unify time context across modules.
+from utils.time_utils import get_time_context
+
+MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
 SCOPES = ["https://mail.google.com/", "https://www.googleapis.com/auth/drive.readonly"]
 
 # ======================================================
 # Authentication Bootstrap
 # ======================================================
 
-def _load_credentials():
-    """Helper to load OAuth credentials shared between Gmail and Drive."""
-    creds = None
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(current_dir, os.pardir))
+# The local _load_credentials function has been removed in favor of
+# centralized credential handling via utils.google_service_helpers. We now
+# expose thin wrappers that call into helpers to obtain pre-authenticated
+# services. These helpers automatically respect GOOGLE_OAUTH_* env vars and
+# refresh tokens as needed.
 
-    credentials_rel = os.environ.get("GOOGLE_OAUTH_CLIENT_FILE")
-    token_rel = os.environ.get("GOOGLE_OAUTH_TOKEN_FILE")
-    if not credentials_rel or not token_rel:
-        raise EnvironmentError("[GMAIL] Missing GOOGLE_OAUTH_* environment variables.")
+def get_gmail_service() -> object:
+    """
+    Return an authenticated Gmail service.
 
-    credentials_path = os.path.join(project_root, credentials_rel)
-    token_path = os.path.join(project_root, token_rel)
-
-    if os.path.exists(token_path):
-        try:
-            creds = Credentials.from_authorized_user_file(token_path)
-        except Exception:
-            creds = None
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            with open(token_path, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
-            creds = flow.run_local_server(port=0)
-            with open(token_path, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
-
-    return creds
+    This delegates credential handling to utils.google_service_helpers.
+    It simply returns the result of _get_gmail_service(), which manages
+    OAuth and token refresh under the hood.
+    """
+    return _get_gmail_service()
 
 
-def get_gmail_service():
-    """Return authenticated Gmail service."""
-    creds = _load_credentials()
-    return build("gmail", "v1", credentials=creds, cache_discovery=False)
+def get_drive_service() -> object:
+    """
+    Return an authenticated Drive service for file attachments via Gmail.
 
-
-def get_drive_service():
-    """Return authenticated Drive service (for file attachments)."""
-    creds = _load_credentials()
-    return build("drive", "v3", credentials=creds, cache_discovery=False)
+    This delegates to utils.google_service_helpers.get_gmail_drive_service,
+    which uses the same scopes as Gmail to access Drive files.
+    """
+    return _get_gmail_drive_service()
 
 # ======================================================
 # Time Context Helper
@@ -77,19 +65,39 @@ def get_drive_service():
 
 def make_time_context(preferred_tz: Optional[str] = None) -> dict:
     """
-    Returns a dictionary with current time, date, and timezone context.
-    Useful for timestamping emails or temporal reasoning in the agent.
+    Return a time context dictionary for Gmail.
+
+    This wrapper delegates to utils.time_utils.get_time_context to compute the
+    current date/time information, then maps it into the structure
+    originally expected by this agent. It returns keys:
+        - current_time: formatted as 12-hour clock with AM/PM
+        - current_date: formatted as Weekday, Month Day, Year
+        - timezone: the IANA timezone string
+        - iso_timestamp: ISO 8601 timestamp including timezone offset
+
+    Args:
+        preferred_tz: Optional IANA timezone string. If provided, the
+            context is based on that timezone. Otherwise, the local
+            timezone is used.
+
+    Returns:
+        A dictionary containing formatted time and date values.
     """
+    ctx = get_time_context(preferred_tz)
+    # Parse the ISO timestamp to format current_time and current_date
     try:
-        tz = ZoneInfo(preferred_tz) if preferred_tz else ZoneInfo(str(get_localzone()))
+        dt = datetime.fromisoformat(ctx["datetime"])
+        current_time = dt.strftime("%I:%M %p")
+        current_date = dt.strftime("%A, %B %d, %Y")
     except Exception:
-        tz = ZoneInfo("America/New_York")
-    now = datetime.now(tz)
+        # Fallback to context fields if parsing fails
+        current_time = ctx.get("time", "")
+        current_date = ctx.get("date", "")
     return {
-        "current_time": now.strftime("%I:%M %p"),
-        "current_date": now.strftime("%A, %B %d, %Y"),
-        "timezone": str(tz),
-        "iso_timestamp": now.isoformat(),
+        "current_time": current_time,
+        "current_date": current_date,
+        "timezone": ctx["timezone"],
+        "iso_timestamp": ctx["datetime"],
     }
 
 # ======================================================
@@ -196,22 +204,53 @@ def send_email(
 # Search Messages
 # ======================================================
 
-def search_messages(query: str, max_results: int = 5) -> list[str]:
+def search_messages(query: str, max_results: int | None = None) -> list[str]:
     """
-    Search Gmail messages by query string.
-    Examples:
-        query="from:boss@example.com subject:report"
-        query="after:2024/01/01 before:2024/12/31"
+    Search Gmail messages by query string and return a list of summaries.
+
+    The Gmail API may return many results, so this implementation fetches
+    messages in batches and continues until either all matching messages
+    are retrieved or ``max_results`` is reached.  If ``max_results`` is
+    ``None`` or non-positive, all available messages are returned.
+
+    Args:
+        query: A Gmail search query (e.g., "from:boss@example.com subject:report").
+        max_results: Optional maximum number of messages to return.  If
+            ``None`` or <= 0, the function returns all matching messages.
+
+    Returns:
+        A list of formatted strings summarizing each message (subject, sender,
+        date, and snippet). If no messages match, returns a single-item list
+        indicating that no messages were found.
     """
     service = get_gmail_service()
     try:
-        results = service.users().messages().list(userId="me", q=query, maxResults=max_results).execute()
-        messages = results.get("messages", [])
+        messages: list[dict[str, Any]] = []  # type: ignore[assignment]
+        page_token: str | None = None
+        # Fetch messages until we exhaust results or hit max_results
+        while True:
+            page_size = 500  # Gmail API supports up to 500 per page
+            if max_results and max_results > 0:
+                remaining = max_results - len(messages)
+                if remaining <= 0:
+                    break
+                page_size = min(page_size, remaining)
+            response = service.users().messages().list(
+                userId="me",
+                q=query,
+                maxResults=page_size,
+                pageToken=page_token,
+            ).execute()
+            messages.extend(response.get("messages", []) or [])
+            page_token = response.get("nextPageToken")
+            if not page_token or (max_results and max_results > 0 and len(messages) >= max_results):
+                break
+
         if not messages:
             return [f"No messages found for query: {query}"]
 
-        formatted_results = []
-        for m in messages:
+        formatted_results: list[str] = []
+        for m in messages[: (max_results or len(messages))]:
             msg = service.users().messages().get(userId="me", id=m["id"], format="metadata").execute()
             headers = msg.get("payload", {}).get("headers", [])
             subject = next((h["value"] for h in headers if h["name"].lower() == "subject"), "(no subject)")
@@ -249,8 +288,7 @@ Rules:
 """.strip()
 
 
-def build_agent():
-    return Agent(
+gmail_agent: Agent =  Agent(
         model=MODEL,
         name="google_gmail_agent",
         description="Gmail assistant that can send, search, and organize messages, and attach Google Drive files.",
@@ -262,3 +300,4 @@ def build_agent():
             make_time_context,
         ],
     )
+__all__ = ["gmail_agent"]

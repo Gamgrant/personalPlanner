@@ -7,5 +7,6 @@
 .venv/
 .creds/credentials.json
 .creds/token.json
+.creds/.env
 *.egg-info/
 personalplanner.egg-info/

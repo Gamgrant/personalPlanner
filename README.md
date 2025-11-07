@@ -8,13 +8,13 @@
         - and for prompts where company is specified make sure it works too
         - make sure that the title, company, location, date posted, description, id and link are available for each job. job descsription should not be trunckated 
 - <span style="color:red">Steven</span>  ★ connect to apollo io/contactout/rocket agent that can scrape info of recruiters, and managers, and reach out to them
-- <span style="color:red">Steven</span> check that the time is properly retrieved in each agent
+- ✅  <span style="color:red">Steven</span> check that the time is properly retrieved in each agent
     - run the code in chat and make sure that each agent has a check what current time function and is using it in the code
 - <span style="color:red">Grant</span> [easy]  cutomize resume for specific job using latex (Grant)
 
-- <span style="color:green">Grant</span> ★ truly web search agent (for resume customization, reasoning capabilities with access to web)
-- <span style="color:green">Steven</span> [easy] google drive agent
-- <span style="color:green">Steven</span> [easy] fix gmail agent so it can send emails and upload the pdf from google drive to the email
+-  ✅ <span style="color:green">Grant</span> ★ truly web search agent (for resume customization, reasoning capabilities with access to web)
+-  ✅ <span style="color:green">Steven</span> [easy] google drive agent
+-  ✅ <span style="color:green">Steven</span> [easy] fix gmail agent so it can send emails and upload the pdf from google drive to the email
 
 
 # nov 6:
