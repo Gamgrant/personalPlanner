@@ -148,16 +148,23 @@ dependencies = [
     "zipp==3.23.0",
     "streamlit>=1.51.0",
     "ngrok>=1.4.0",
+    "pymupdf>=1.26.6",
+    "pyqt6>=6.10.0",
+    "pillow>=12.0.0",
+    "pyside6>=6.10.0",
 ]
-[tool.uv]
-managed = true
+
 
 [tool.uv.sources]
 google-adk = { git = "https://github.com/google/adk-python.git", rev = "main" }
 
-[project.scripts]
-dev = "dev:main"
-
 [tool.setuptools]
 packages = ["orchestrator", "calendar_service", "google_docs_service"]
 
+[tool.uv]
+package = true
+
+[project.scripts]
+build-resume = "resume_customization.build_resume:main"
+overlay = "resume_customization.overlay_viewer:main"
+debug = "resume_customization.debug_regions:main"

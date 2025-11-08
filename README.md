@@ -1,3 +1,25 @@
+# resume in latex
+!!! run this first 
+chmod +x resume_customization/bootstrap_tex.sh
+
+# then run 
+
+uv pip install --upgrade pip && uv add pymupdf pyside6 pillow && \
+( command -v tectonic >/dev/null 2>&1 || ./resume_customization/bootstrap_tex.sh || true ) && \
+uv run python resume_customization/build_resume.py --open
+
+
+# in the future to build latex, just run :
+uv run build-resume
+
+# this is for viewing and debugging
+uv run overlay
+uv run debug
+---
+
+
+
+
 # Nov 5:
 
 - <span style="color:red">Steven</span> ★ make agent that connects to linkedin, glassdoor, Indeed and looks for recent (posted within 7 days) in agentic way 

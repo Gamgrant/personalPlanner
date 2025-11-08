@@ -1,0 +1,308 @@
+% ---- PDF management layer (optional; safe to keep) ----
+\RequirePackage{pdfmanagement-testphase}
+\DocumentMetadata{
+  uncompress,
+  lang = en-US,
+  pdfstandard = ua-1
+}
+
+\documentclass[10pt,letterpaper]{article}
+
+% ---- Engine guard: require LuaLaTeX ----
+\usepackage{iftex}
+\ifLuaTeX\else
+  \PackageError{main}{Please compile with LuaLaTeX}{}
+\fi
+\usepackage{environ} % to capture environment bodies
+
+% Measure-and-place helper: keep a block together dynamically
+\newcommand{\KeepTogetherBox}[1]{%
+  \par
+  \begingroup
+    \setbox0=\vbox{#1}%
+    \dimen0=\dimexpr\ht0+\dp0\relax
+    \dimen2=\dimexpr\pagegoal-\pagetotal\relax
+    \ifdim \dimen2<\dimen0 \newpage \fi
+    \noindent\box0\par
+  \endgroup
+}
+
+% ---- Layout & fonts ----
+\usepackage[margin=0.2in]{geometry}
+\usepackage{setspace}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+\pagestyle{empty}
+
+\usepackage{fontspec}
+\setmainfont{Latin Modern Roman}
+\setsansfont{Latin Modern Sans}
+\setmonofont{Latin Modern Mono}
+
+% ---- Hyperlinks ----
+\usepackage{hyperref}
+\hypersetup{
+  pdfauthor = {Grant Ovsepyan},
+  pdftitle  = {Resume - Grant Ovsepyan},
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  citecolor=blue
+}
+
+% ---- Lists & sections ----
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=*, topsep=2pt, itemsep=2pt, parsep=0pt}
+
+\usepackage{titlesec}
+\titleformat{\section}{\large\bfseries}{}{0pt}{}
+\titlespacing*{\section}{0pt}{2pt}{0pt}
+
+% ---- Colors (for hidden stats) ----
+\usepackage{xcolor}
+
+\newcommand{\BlockStart}[1]{\mbox{\color{white}\tiny[BEGIN #1]}}
+\newcommand{\BlockEnd}[1]{\mbox{\color{white}\tiny[END #1]}}
+
+% ---- Contact info ----
+\newcommand{\FullName}{Grant Ovsepyan}
+\newcommand{\ContactLine}{%
+  \href{mailto:govsepya@alumni.cmu.edu}{govsepya@alumni.cmu.edu} \,|\, (608) 216-5392 \,|\,
+  \href{https://www.linkedin.com/in/grant-ovs/}{linkedin.com/in/grant-ovs/} \,|\,
+  \href{https://github.com/Gamgrant}{github.com/Gamgrant}
+}
+
+% ---- Counters ----
+\newcounter{experiencecount}
+\newcounter{projectcount}
+\newcounter{skillcount}
+
+% ---- Tight bullets (no tagging) ----
+% ---- Tight bullets (extra snug) ----
+% ---- Tight bullets (ultra snug) ----
+\newenvironment{tightbullets}
+  {\begin{itemize}[
+      leftmargin=*,
+      nosep,
+      topsep=0pt,
+      partopsep=0pt,
+      parsep=0pt,
+      itemsep=0pt,        % no extra space between bullets
+      before=\vspace{-10pt}, % pull 1st bullet up toward the line above
+      after=\vspace{-2pt}
+  ]}
+  {\end{itemize}}
+
+% ----- Auto-ID wrappers (generic ordinal IDs) -----
+% Experience: auto tag as exp:1, exp:2, ...
+\newcommand{\entryauto}[5]{%
+  \edef\thisid{exp:\number\numexpr\value{experiencecount}+1\relax}%
+  \KeepTogetherBox{%
+    \BlockStart{\thisid}%
+    \entry{#1}{#2}{#3}{#4}{#5}%
+    \BlockEnd{\thisid}%
+  }%
+}
+
+% Project: dynamic, unbreakable block
+\newcommand{\projectauto}[3]{%
+  \edef\thisid{pr:\number\numexpr\value{projectcount}+1\relax}%
+  \KeepTogetherBox{%
+    \BlockStart{\thisid}%
+    \project{#1}{#2}{#3}%
+    \BlockEnd{\thisid}%
+  }%
+}
+
+% Skills: dynamic, unbreakable entire section
+\NewEnviron{skillsauto}{%
+  \edef\thisid{sk:\number\numexpr\value{skillcount}+1\relax}%
+  \KeepTogetherBox{%
+    \BlockStart{\thisid}%
+    \BODY
+    \BlockEnd{\thisid}%
+  }%
+}
+
+% ---- Section header with hrule (Overleaf look) ----
+\newcommand{\BeginSection}[1]{%
+  \vspace{1pt}\section*{#1}\vspace{1pt}\hrule\vspace{2pt}%
+}
+
+% ---- Header (name + contact) ----
+\newcommand{\Header}{%
+  {\LARGE \textbf{\FullName}}\\[-1pt]
+  {\small \ContactLine}
+}
+
+% ---- Experience entry ----
+% #1 Company  #2 Role  #3 Location  #4 Dates  #5 Bullets (tightbullets)
+\newcommand{\entry}[5]{%
+  \stepcounter{experiencecount}%
+  \textbf{#1}\hfill\textit{#3}\\
+  \emph{#2}\hfill #4\\[-1pt]
+  #5
+  \vspace{5pt}
+}
+
+% ---- Project entry ----
+% #1 Title  #2 Tech  #3 Bullets (tightbullets)
+\newcommand{\project}[3]{%
+  \stepcounter{projectcount}%
+  \textbf{#1} \,|\, \textit{#2}\\[-1pt]
+  #3
+  \vspace{5pt}
+}
+
+% ---- Skills row ----
+\newcommand{\skillrow}[2]{%
+  \stepcounter{skillcount}%
+  \textbf{#1:} #2\\
+}
+
+% ---- Embedded counts (no tags) ----
+\newcommand{\EmbedCounts}{%
+  {\color{white}\tiny \mbox{RESUME-STATS skills=\arabic{skillcount} projects=\arabic{projectcount} experiences=\arabic{experiencecount}}}%
+}
+
+% ---- Document ---------------------------------------------------------------
+\begin{document}
+\Header
+
+% ===== Education =====
+\BeginSection{Education}
+\textbf{Carnegie Mellon University} \hfill Pittsburgh, PA\\
+M.S. in Artificial Intelligence Engineering \;|\; GPA: 3.81/4.00 \hfill Dec 2024\\
+Relevant: NLP, Modern LLMs, Retrieval \& RAG, Distributed Systems, Data Engineering
+
+\medskip
+\textbf{University of Wisconsin–Madison} \hfill Madison, WI\\
+B.S. in Computer Science and B.S. in Chemical Engineering \;|\; GPA: 3.6/4.0 \hfill Aug 2023
+
+% ===== Experience =====
+\BeginSection{Experience}
+
+\entryauto
+{Medical Weight Loss Consultants (MWLC)}
+{AI/ML Engineer}
+{Remote, US}
+{Feb 2025 -- Aug 2025}
+{%
+  \begin{tightbullets}
+    \item Built OCR/NLP/CV pipelines + evals that lifted conversion 7× (2\% $\rightarrow$ 14\%) and cut spend 35\%; shipped dashboards and forecasting with tracked drift/latency.
+    \item Built prompt-engineered agents for script/voiceover generation and a Streamlit + SQL performance dashboard; reduced wasted spend 35\% by flagging underperformers.
+    \item Developed forecasting (Prophet, regression baselines) for CTR/revenue, cutting error 22\% (MAPE).
+  \end{tightbullets}
+}
+
+\entryauto
+{GE Healthcare (Codeworks LLC)}
+{Software Developer Intern}
+{Waukesha, WI}
+{May 2024 -- Aug 2024}
+{%
+  \begin{tightbullets}
+    \item Automated C++/Python CI/QA (CMake/Jenkins) across 3 OSs, reducing build time 15\% and accelerating MRI workflow iteration.
+    \item Implemented early statistical quality checks to flag k-space smear 5 min earlier, improving reliability of Orchestra SDK releases.
+  \end{tightbullets}
+}
+
+\entryauto
+{Mandli Communications}
+{Software/Systems Intern}
+{Fitchburg, WI}
+{Jan 2023 -- Jul 2023}
+{%
+  \begin{tightbullets}
+    \item Fine-tuned CLRNet on proprietary data, boosting lane-detection F1 by 15\% over the baseline.
+    \item Engineered ROS2/WebSocket LiDAR streaming pipeline handling 1.4M pts/sec with $\sim$50 ms latency for real-time point-cloud evaluation.
+  \end{tightbullets}
+}
+
+\entryauto
+{Koch Industries}
+{Data/ML Intern}
+{Rosemount, MN}
+{May 2022 -- Aug 2022}
+{%
+  \begin{tightbullets}
+    \item Built XGBoost/Decision-Tree anomaly classifiers and calibrated thresholds to hold recall constant; precision +12\%, false positives down; published to interactive dashboards.
+    \item Forecasted equipment condition with ARIMA/VAR/Prophet using rolling time-series CV; enabled proactive maintenance and cut unplanned downtime 8\%.
+    \item Built PySpark ETL ingesting 40M+ rows/day to AWS S3, with cleaning, imputation, and feature prep for ML.
+  \end{tightbullets}
+}
+
+\entryauto
+{Additive Manufacturing (Boydston Lab)}
+{Research Assistant}
+{Madison, WI}
+{Jan 2019 -- Mar 2023}
+{%
+  \begin{tightbullets}
+    \item Ran 1TB+ COMSOL heat-transfer simulations; reframed outputs in polar coordinates for distributional error analysis.
+    \item Trained XGBoost surrogate regressors with k-fold CV (optimized for MAE/RMSE), cutting runtime 70\% and achieving $\sim$100× lower dimensional error in topology optimization.
+    \item Co-authored \href{https://www.nature.com/articles/s41467-024-48159-7}{Nature Communications paper}.
+  \end{tightbullets}
+}
+
+% ===== Projects =====
+\BeginSection{Projects}
+
+\projectauto
+{RAG QA System}
+{LLaMA-3, Mistral, DeepSeek, LangChain, Pinecone}
+{%
+  \begin{tightbullets}
+    \item Built RAG QA over a CMU/Pittsburgh corpus with LangChain (Pinecone + Chroma); retrieval \& answer evals lifted LLaMA-3 F1 from 0.28 $\rightarrow$ 0.45.
+    \item Built dynamic scrapers (Selenium, BeautifulSoup) that expand hidden sections, traverse lazy-loaded lists/paged views, and OCR PDFs.
+    \item Designed hierarchical metadata for filtering and built an evaluation harness with 150 labeled questions.
+  \end{tightbullets}
+}
+
+\projectauto
+{FIFA Performance Prediction}
+{PySpark, SparkML, PyTorch, GCP (BigQuery, Dataflow), PostgreSQL}
+{%
+  \begin{tightbullets}
+    \item GCP data pipeline across 8 datasets, 100+ features, millions of rows with schema validation and optimized queries.
+    \item Trained Random Forest, SVM, PyTorch NN on a 32 GB Dataproc cluster; RMSE 1.51 $\rightarrow$ 1.10 ($-27\%$).
+    \item Automated hyperparameter tuning via Spark MLlib, improving runtime efficiency by 40\%.
+  \end{tightbullets}
+}
+
+\projectauto
+{Audio-Guided Album Cover Generation}
+{CLIP, Stable Diffusion 1.4, PyTorch}
+{%
+  \begin{tightbullets}
+    \item Built ETL scraper (1980–2024) across YouTube/Wikipedia + Spotify API (requests/BS4/pandas + multithreading) with schema checks and retry/backoff.
+    \item Shipped dashboards (Streamlit) to audit ingestion \& outputs—coverage by year/genre, API error rates/latency, and side-by-side comparisons for QA.
+    \item Fused multimodal signals—CLIP text + audio embeddings via cross-attention/ControlNet—and packaged train/inference pipelines for reproducible runs.
+  \end{tightbullets}
+}
+
+\projectauto
+{Mini-LLAMA (42M params)}
+{PyTorch, Transformers}
+{%
+  \begin{tightbullets}
+    \item Implemented Transformer blocks: RoPE, attention, optimizer in PyTorch; pretrained on TinyStories.
+    \item Fine-tuned with classification heads, reaching 85\% accuracy (SST-5, CFIMDB).
+  \end{tightbullets}
+}
+
+% ===== Skills =====
+\BeginSection{Skills}
+\begin{skillsauto}
+\skillrow{Languages}{Python, C++, SQL, TypeScript}
+\skillrow{CV \& OCR}{OpenCV, PyTorch, CLIP; layout-aware OCR (PaddleOCR/DocTR), Tesseract; image preprocessing \& QA}
+\skillrow{LLMs}{Transformers, LoRA/QLoRA, RAG, prompt engineering; LangChain/CrewAI}
+\skillrow{Data \& ETL}{PySpark, Airflow; BeautifulSoup/requests; pandas/NumPy; schema validation; Spotify/YouTube APIs}
+\skillrow{Dashboards \& Web}{Streamlit; Node.js/Next.js; REST/webhooks}
+\skillrow{Cloud/Infra}{AWS (ECS/EC2/S3/Lambda/API GW), Docker, CI/CD, MLflow, Linux}
+\end{skillsauto} 
+
+% ===== Embedded machine-readable counts =====
+\EmbedCounts
+
+\end{document}
