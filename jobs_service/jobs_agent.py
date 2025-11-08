@@ -19,9 +19,9 @@ except Exception:
 from google.genai import types
 
 import os
-from .sub_agent.bigquery_storage_agent import bigquery_storage_agent
-from .sub_agent.greenhouse_fetch_agent import greenhouse_fetch_agent
-from .sub_agent.ui_filter_agent import filter_ui_agent
+from jobs_service.sub_agent.database_agent import database_agent
+from jobs_service.sub_agent.greenhouse_fetch_agent import greenhouse_fetch_agent
+from jobs_service.sub_agent.enrichment_agent import description_agent
 
 MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
 
@@ -54,8 +54,8 @@ job_search_pipeline = SequentialAgent(
     description=JOB_SEARCH_DESCRIPTION,
     sub_agents=[
         greenhouse_fetch_agent,
-        bigquery_storage_agent,
-        filter_ui_agent,
+        database_agent,
+        description_agent,
     ],
 )
 

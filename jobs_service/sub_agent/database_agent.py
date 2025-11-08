@@ -163,7 +163,7 @@ def write_sheet_values(
 # -------------------------------
 # Helpers for Job_search_Database
 # -------------------------------
-def _find_job_search_spreadsheet_id(name: str = "Job_search_Database") -> str:
+def _find_job_search_spreadsheet_id(name: str = "Job_Search_Database") -> str:
     """
     Robustly find spreadsheet ID by name (case-insensitive, across all drives).
     Preference order:
@@ -230,7 +230,7 @@ def _get_first_sheet_name(spreadsheet_id: str) -> str:
 
 def append_jobs_to_job_search_database(jobs_result: List[Dict[str, Any]]) -> str:
     """
-    Append job results (title, url, company, location, description, date_posted)
+    Append job results (title, url, company, location date_posted)
     into the first sheet of 'Job_search_Database' (no arbitrary caps).
     """
     if not jobs_result:
@@ -245,14 +245,13 @@ def append_jobs_to_job_search_database(jobs_result: List[Dict[str, Any]]) -> str
             j.get("url", ""),
             j.get("company", ""),
             j.get("location", ""),
-            j.get("description", ""),
             j.get("date_posted", ""),
         ])
 
     if not rows:
         return "No valid job records found in jobs_result."
 
-    spreadsheet_id = _find_job_search_spreadsheet_id("Job_search_Database")
+    spreadsheet_id = _find_job_search_spreadsheet_id("Job_Search_Database")
     sheet_name = _get_first_sheet_name(spreadsheet_id)
     sheets = get_sheets_service()
 
@@ -265,59 +264,26 @@ def append_jobs_to_job_search_database(jobs_result: List[Dict[str, Any]]) -> str
     ).execute()
 
     updated = result.get("updates", {}).get("updatedRows") or len(rows)
-    return f"Appended {updated} job rows to '{sheet_name}' in 'Job_search_Database'."
+    return f"Appended {updated} job rows to '{sheet_name}' in 'Job_Search_Database'."
 
 # -------------------------------
 # Agents
 # -------------------------------
-sheets_agent_instruction_text = """
-You are a focused Google Sheets assistant. You can list spreadsheets, inspect sheet metadata,
-read ranges, write/update ranges (with a JSON string), clear ranges, create spreadsheets, and add sheets (tabs).
 
-Rules:
-- Use A1 notation (e.g., 'Sheet1!A1:D10') when specifying explicit ranges.
-- For writing, pass `values_json` as a JSON-encoded 2D array, e.g. "[[\"Task\",\"Done\"],[\"Migrate\",\"Yes\"]]".
-- 'USER_ENTERED' respects formulas/locale; 'RAW' writes literal values.
-- Confirm actions with affected range or created IDs/URLs.
-""".strip()
-
-def build_agent():
-    return Agent(
-        model=MODEL,
-        name="google_sheets_agent",
-        description=(
-            "Google Sheets assistant for listing spreadsheets, reading/writing ranges, "
-            "clearing ranges, creating spreadsheets, and adding sheets. "
-            + sheets_agent_instruction_text
-        ),
-        generate_content_config=types.GenerateContentConfig(temperature=0.2),
-        tools=[
-            list_spreadsheets,
-            get_spreadsheet_info,
-            read_sheet_values,
-            write_sheet_values,
-            # If you have these in another module, import and add here; otherwise omit:
-            # clear_sheet_values,
-            # create_spreadsheet,
-            # create_sheet,
-        ],
-    )
 
 job_sheets_agent_instruction = """
 You take structured job results from the ATS Jobs Agent (output_key='jobs_result')
-and append them into the existing 'Job_search_Database' Google Sheet.
+and append them into the existing 'Job_Search_Database' Google Sheet.
 """.strip()
 
-bigquery_storage_agent = Agent(
+database_agent = Agent(
     model=MODEL,
     name="job_search_sheets_agent",
     description=(
-        "Appends ATS job search results into the 'Job_search_Database' spreadsheet. "
+        "Appends ATS job search results into the 'Job_Search_Database' spreadsheet. "
         + job_sheets_agent_instruction
     ),
     generate_content_config=types.GenerateContentConfig(temperature=0),
     tools=[append_jobs_to_job_search_database],
     output_key="spreadsheet",
 )
-
-__all__ = ["bigquery_storage_agent", "build_agent"]

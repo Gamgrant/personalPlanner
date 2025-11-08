@@ -1,30 +1,36 @@
 """
 ATS Jobs Agent (Greenhouse Only + ADK-compatible)
 
-This agent queries official public Greenhouse job board APIs.
+Queries official public Greenhouse job board APIs.
 
 Capabilities:
 - Find jobs by title (e.g., "Data Scientist") using public Greenhouse boards.
 - Search by title and experience across:
     * companies explicitly passed to the tool,
     * or companies configured in session.state,
-    * or a small curated DEFAULT_COMPANIES fallback.
+    * or DEFAULT_COMPANIES fallback.
 - List jobs with a given title in the last N days (1–10).
 - List jobs posted/updated "today".
 - List jobs posted/updated in the last N months (1–3).
 - Filter by required experience (numeric or 'junior/mid/senior').
 - Provide an ADK-compatible make_time_context helper.
 
-Notes:
-- The user can say: "Data scientist job posted today" or
-  "Find data scientist jobs in last 5 days" with no company specified.
-- The agent will:
-    1) Prefer companies passed in the tool call;
-    2) Else use companies from session.state (if provided);
-    3) Else search across DEFAULT_COMPANIES.
+ALL CORE SEARCH FUNCTIONS RETURN A STRUCTURED LIST:
+    List[Dict[str, Any]] with keys:
+        - title
+        - company
+        - location
+        - url
+        - date_posted
+        - id          (when available)
+        - description (normalized text, when available)
+
+Use `format_jobs_for_display` ONLY when you need a human-readable string.
 """
 
 from __future__ import annotations
+
+import os
 import re
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
@@ -35,15 +41,9 @@ from google.genai import types
 from tzlocal import get_localzone
 from zoneinfo import ZoneInfo
 
-# Load the model name from environment variables if available. Defaults to
-# 'gemini-2.5-flash' when unspecified. Centralizing this variable allows
-# configuration via .env without editing code in multiple places.
-import os
-MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
-
-# Import centralized time utilities to provide consistent time context
-# across all modules. We wrap make_time_context below using get_time_context.
 from utils.time_utils import get_time_context
+
+MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
 
 # -------------------------------
 # Helpers
@@ -86,7 +86,9 @@ def _is_recent(ts: Optional[datetime], cutoff: Optional[datetime]) -> bool:
 def _normalize_text(html_or_text: Optional[str]) -> str:
     if not html_or_text:
         return ""
-    text = re.sub(r"<[^>]+>", " ", html_or_text)
+    text = re.sub(r"<script[^>]*>.*?</script>", " ", html_or_text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -110,7 +112,6 @@ def _parse_experience(text: str) -> Optional[int]:
     for word, yrs in levels.items():
         if word in lowered:
             return yrs
-
     return None
 
 
@@ -142,41 +143,21 @@ def find_experience_in_description(description: str) -> Optional[int]:
 
 def make_time_context(preferred_tz: Optional[str] = None) -> dict:
     """
-    Return an ADK-compatible time context for job queries.
-
-    This wrapper uses utils.time_utils.get_time_context to obtain the
-    base date/time fields, then adds a cutoff timestamp (start of the
-    current day) and a human-readable summary. By delegating to
-    get_time_context, we ensure consistent timezone handling across
-    modules.
-
-    Args:
-        preferred_tz: Optional IANA timezone string. If provided, the
-            context is based on that timezone. Otherwise, the local
-            timezone is used.
-
-    Returns:
-        A dictionary containing ISO datetime, date, time, weekday,
-        timezone, UTC offset, cutoff time (start of day), and summary.
+    Return an ADK-compatible time context, using shared utils.
     """
     ctx = get_time_context(preferred_tz)
-    # Compute start of the day in the same timezone as the ISO datetime
+
     try:
         dt = datetime.fromisoformat(ctx["datetime"])
-        cutoff = dt.replace(hour=0, minute=0, second=0, microsecond=0)
-        cutoff_iso_local = cutoff.isoformat()
     except Exception:
-        # Fallback: use current datetime
         dt = datetime.now(get_localzone())
-        cutoff_iso_local = dt.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    # Human-readable summary
+
+    cutoff = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    ctx["cutoff_iso_local"] = cutoff.isoformat()
     try:
-        summary = dt.strftime("%A, %b %d %Y, %I:%M %p %Z")
+        ctx["summary"] = dt.strftime("%A, %b %d %Y, %I:%M %p %Z")
     except Exception:
-        summary = f"{ctx.get('weekday', '')}, {ctx.get('date', '')} {ctx.get('time', '')} {ctx.get('timezone', '')}"
-    # Extend context
-    ctx["cutoff_iso_local"] = cutoff_iso_local
-    ctx["summary"] = summary
+        ctx["summary"] = f"{ctx.get('weekday','')}, {ctx.get('date','')} {ctx.get('time','')} {ctx.get('timezone','')}"
     return ctx
 
 # -------------------------------
@@ -186,7 +167,6 @@ def make_time_context(preferred_tz: Optional[str] = None) -> dict:
 GH_LIST_URL = "https://boards-api.greenhouse.io/v1/boards/{company}/jobs"
 GH_DETAIL_URL = "https://boards-api.greenhouse.io/v1/boards/{company}/jobs/{job_id}?content=true"
 
-# Fallback set used ONLY when caller/session does not provide companies
 DEFAULT_COMPANIES = [
     "openai",
     "stripe",
@@ -196,13 +176,8 @@ DEFAULT_COMPANIES = [
     "asana",
 ]
 
+
 def _get_companies(session: Optional[dict], companies: Optional[List[str]]) -> List[str]:
-    """
-    Resolve companies to query:
-      1) Explicit `companies` argument (if provided)
-      2) session.state.companies / greenhouse_companies / job_companies
-      3) DEFAULT_COMPANIES fallback
-    """
     if companies:
         return [c for c in companies if c]
 
@@ -222,7 +197,6 @@ def _get_companies(session: Optional[dict], companies: Optional[List[str]]) -> L
             if resolved:
                 return resolved
 
-    # Final fallback: internal default set (so natural-language queries just work)
     return DEFAULT_COMPANIES
 
 
@@ -279,15 +253,19 @@ def greenhouse_get_job(company: str, job_id: int) -> Dict[str, Any]:
     }
 
 # -------------------------------
-# Search by query (title + experience)
+# Core search functions (structured outputs)
 # -------------------------------
 
 def search_jobs(
     query: str,
     companies: Optional[List[str]] = None,
     session: Optional[dict] = None,
-    max_results: Optional[int] = None
-) -> str:
+    max_results: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Search across companies by inferred title + experience.
+    Returns a list of job dicts (no pretty string).
+    """
     companies = _get_companies(session, companies)
     years_exp = _parse_experience(query)
 
@@ -298,7 +276,7 @@ def search_jobs(
     )
     target_title = title_match[0].strip() if title_match else query.strip()
 
-    combined_jobs: List[Dict[str, Any]] = []
+    combined: List[Dict[str, Any]] = []
 
     for comp in companies:
         try:
@@ -314,62 +292,29 @@ def search_jobs(
             if years_exp and job_exp and job_exp > years_exp + 2:
                 continue
 
-            combined_jobs.append(job)
-            # If a max_results cap is provided and we've reached it, stop
-            if max_results and max_results > 0 and len(combined_jobs) >= max_results:
+            combined.append(job)
+            if max_results and len(combined) >= max_results:
                 break
-        if max_results and max_results > 0 and len(combined_jobs) >= max_results:
+        if max_results and len(combined) >= max_results:
             break
 
-    if not combined_jobs:
-        return (
-            f"No suitable '{target_title}' roles found (~{years_exp or 'any'} yrs exp) "
-            f"across: {', '.join(companies)}."
-        )
+    return combined
 
-    lines = [
-        f"Found {len(combined_jobs)} matching '{target_title}' jobs "
-        f"(~{years_exp or 'any'} yrs exp) across {', '.join(companies)}:\n"
-    ]
-    # Determine how many jobs to display based on max_results (if provided)
-    display_count = len(combined_jobs) if not (max_results and max_results > 0) else min(len(combined_jobs), max_results)
-    for idx, j in enumerate(combined_jobs[:display_count], 1):
-        exp_info = find_experience_in_description(j["description"])
-        exp_text = f" | Req: {exp_info} yrs" if exp_info else ""
-        lines.append(
-            f"{idx}. {j['title']} — {j['company']} — {j['location']}{exp_text}\n"
-            f"   Date: {j['date_posted']}\n"
-            f"   ID: {j['id']}\n"
-            f"   Link: {j['url']}\n"
-        )
-    return "\n".join(lines)
-
-# -------------------------------
-# Title + last N days
-# -------------------------------
 
 def find_jobs_by_title_in_last_days(
     title: str,
     days: int,
     companies: Optional[List[str]] = None,
     session: Optional[dict] = None,
-    max_results: Optional[int] = None
-) -> str:
-    """
-    Core for prompts like:
-      "Find Data scientist jobs within the last 5 days"
-      "Data scientist job posted today"
-    """
+    max_results: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     companies = _get_companies(session, companies)
 
-    if days < 1:
-        days = 1
-    if days > 10:
-        days = 10
-
+    days = max(1, min(days, 10))
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     target_title = title.strip()
-    combined_jobs: List[Dict[str, Any]] = []
+
+    combined: List[Dict[str, Any]] = []
 
     for comp in companies:
         try:
@@ -384,47 +329,27 @@ def find_jobs_by_title_in_last_days(
             if not _title_matches(job["title"], target_title):
                 continue
 
-            combined_jobs.append(job)
-            if max_results and max_results > 0 and len(combined_jobs) >= max_results:
+            combined.append(job)
+            if max_results and len(combined) >= max_results:
                 break
-        if max_results and max_results > 0 and len(combined_jobs) >= max_results:
+        if max_results and len(combined) >= max_results:
             break
 
-    if not combined_jobs:
-        return (
-            f"No '{target_title}' jobs found in the last {days} day(s) "
-            f"across: {', '.join(companies)}."
-        )
+    return combined
 
-    lines = [
-        f"Found {len(combined_jobs)} '{target_title}' jobs in the last {days} day(s) "
-        f"across {', '.join(companies)}:\n"
-    ]
-    display_count = len(combined_jobs) if not (max_results and max_results > 0) else min(len(combined_jobs), max_results)
-    for idx, j in enumerate(combined_jobs[:display_count], 1):
-        lines.append(
-            f"{idx}. {j['title']} — {j['company']} — {j['location']}\n"
-            f"   Date: {j['date_posted']}\n"
-            f"   Link: {j['url']}\n"
-        )
-    return "\n".join(lines)
-
-# -------------------------------
-# Today + last N months
-# -------------------------------
 
 def list_recent_jobs(
     companies: Optional[List[str]] = None,
     session: Optional[dict] = None,
-    max_results: Optional[int] = None
-) -> str:
+    max_results: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     companies = _get_companies(session, companies)
 
     cutoff = _cutoff_from_session(session)
     if cutoff is None:
         cutoff = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
-    combined_jobs: List[Dict[str, Any]] = []
+    combined: List[Dict[str, Any]] = []
 
     for comp in companies:
         try:
@@ -435,43 +360,26 @@ def list_recent_jobs(
         for job in gh_jobs:
             ts = _parse_iso(job.get("date_posted", ""))
             if ts and _is_recent(ts, cutoff):
-                combined_jobs.append(job)
-                if max_results and max_results > 0 and len(combined_jobs) >= max_results:
+                combined.append(job)
+                if max_results and len(combined) >= max_results:
                     break
-        if max_results and max_results > 0 and len(combined_jobs) >= max_results:
+        if max_results and len(combined) >= max_results:
             break
 
-    if not combined_jobs:
-        return f"No new jobs posted today ({cutoff.date()}) across: {', '.join(companies)}."
-
-    lines = [f"Found {len(combined_jobs)} new jobs today ({cutoff.date()}) across {', '.join(companies)}:\n"]
-    display_count = len(combined_jobs) if not (max_results and max_results > 0) else min(len(combined_jobs), max_results)
-    for idx, j in enumerate(combined_jobs[:display_count], 1):
-        exp_info = find_experience_in_description(j["description"])
-        exp_text = f" | Req: {exp_info} yrs" if exp_info else ""
-        lines.append(
-            f"{idx}. {j['title']} — {j['company']} — {j['location']}{exp_text}\n"
-            f"   Date: {j['date_posted']}\n"
-            f"   Link: {j['url']}\n"
-        )
-    return "\n".join(lines)
+    return combined
 
 
 def list_jobs_in_last_months(
     months: int = 1,
     companies: Optional[List[str]] = None,
     session: Optional[dict] = None,
-    max_results: Optional[int] = None
-) -> str:
+    max_results: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     companies = _get_companies(session, companies)
 
-    if months < 1:
-        months = 1
-    if months > 3:
-        months = 3
-
+    months = max(1, min(months, 3))
     cutoff = datetime.now(timezone.utc) - timedelta(days=30 * months)
-    combined_jobs: List[Dict[str, Any]] = []
+    combined: List[Dict[str, Any]] = []
 
     for comp in companies:
         try:
@@ -482,60 +390,73 @@ def list_jobs_in_last_months(
         for job in gh_jobs:
             ts = _parse_iso(job.get("date_posted", ""))
             if ts and ts >= cutoff:
-                combined_jobs.append(job)
-                if max_results and max_results > 0 and len(combined_jobs) >= max_results:
+                combined.append(job)
+                if max_results and len(combined) >= max_results:
                     break
-        if max_results and max_results > 0 and len(combined_jobs) >= max_results:
+        if max_results and len(combined) >= max_results:
             break
 
-    if not combined_jobs:
-        return f"No jobs found in the last {months} month(s) across: {', '.join(companies)}."
+    return combined
 
-    lines = [f"Found {len(combined_jobs)} jobs in the last {months} month(s) across {', '.join(companies)}:\n"]
-    display_count = len(combined_jobs) if not (max_results and max_results > 0) else min(len(combined_jobs), max_results)
-    for idx, j in enumerate(combined_jobs[:display_count], 1):
+# -------------------------------
+# Optional: pretty-printer for UI
+# -------------------------------
+
+def format_jobs_for_display(jobs: List[Dict[str, Any]], header: Optional[str] = None) -> str:
+    """
+    Convert a structured jobs list to a human-readable string.
+    Safe to use as a separate tool; DOES NOT affect structured pipeline.
+    """
+    if not jobs:
+        return "No jobs found."
+
+    lines = []
+    if header:
+        lines.append(header.strip() + "\n")
+    for idx, j in enumerate(jobs, 1):
         lines.append(
-            f"{idx}. {j['title']} — {j['company']} — {j['location']}\n"
-            f"   Date: {j['date_posted']}\n"
-            f"   Link: {j['url']}\n"
+            f"{idx}. {j.get('title','')} — {j.get('company','')} — {j.get('location','')}\n"
+            f"   Date: {j.get('date_posted','')}\n"
+            f"   Link: {j.get('url','')}\n"
         )
     return "\n".join(lines)
 
 # -------------------------------
-# Agent Factory
+# Agent
 # -------------------------------
 
 ats_agent_instruction_text = """
 You are a helpful ATS jobs assistant that uses only official public Greenhouse APIs.
 
-Behavior:
-- For queries like "Data scientist job posted today" or
-  "Find data scientist jobs within the last 5 days":
-    * Infer the role title from the text.
-    * Use find_jobs_by_title_in_last_days with days inferred from "today"/"last N days".
-    * If no companies are passed, rely on internal/default or session-configured companies;
-      do NOT ask the user for company names.
-- For queries mentioning experience, filter out roles requiring more than (requested + 2) years.
-- Always return real jobs only, including: title, company, location, date posted, ID, link.
+Rules:
+- Use search_jobs / find_jobs_by_title_in_last_days / list_recent_jobs /
+  list_jobs_in_last_months to return structured job lists.
+- These functions MUST be treated as the source of truth and their outputs
+  passed directly to downstream tools (e.g., Sheets, BigQuery, enrichment).
+- When a human-readable answer is needed, call format_jobs_for_display(jobs=...).
+- Do NOT write parsing code inside tool calls.
 """
 
 greenhouse_fetch_agent = Agent(
-        model=MODEL,
-        name="ats_jobs_agent",
-        description=(
-            "An assistant that queries public Greenhouse job-board APIs for legitimate job listings. "
-            + ats_agent_instruction_text
-        ),
-        generate_content_config=types.GenerateContentConfig(temperature=0.2),
-        tools=[
-            greenhouse_list_jobs,
-            greenhouse_get_job,
-            search_jobs,
-            find_jobs_by_title_in_last_days,
-            list_recent_jobs,
-            list_jobs_in_last_months,
-            find_experience_in_description,
-            make_time_context,
-        ],
-    )
+    model=MODEL,
+    name="ats_jobs_agent",
+    description=(
+        "Fetches structured job listings from public Greenhouse APIs for use in a multi-step pipeline. "
+        + ats_agent_instruction_text
+    ),
+    generate_content_config=types.GenerateContentConfig(temperature=0.2),
+    tools=[
+        greenhouse_list_jobs,
+        greenhouse_get_job,
+        search_jobs,
+        find_jobs_by_title_in_last_days,
+        list_recent_jobs,
+        list_jobs_in_last_months,
+        format_jobs_for_display,
+        find_experience_in_description,
+        make_time_context,
+    ],
+    output_key="jobs_result",  # downstream agents read this
+)
+
 __all__ = ["greenhouse_fetch_agent"]
