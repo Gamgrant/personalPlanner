@@ -1,0 +1,24 @@
+# Core web framework
+fastapi
+uvicorn[standard]
+
+# Google ADK / GenAI
+google-adk
+google-genai
+
+# HTTP + utilities
+requests
+python-dotenv
+
+# Timezone / parsing helpers (you used these)
+tzlocal
+dateparser
+
+# Google APIs (for Gmail, Sheets, Docs, Drive integrations)
+google-api-python-client
+google-auth
+google-auth-httplib2
+google-auth-oauthlib
+
+# (Optional but common) Pydantic explicitly, in case of version pinning
+pydantic>=2.0.0

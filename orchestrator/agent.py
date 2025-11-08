@@ -180,9 +180,11 @@ orchestrator_agent = Agent(
     sub_agents=[calendar_agent, google_docs_agent, gmail_agent, google_sheets_agent, google_drive_agent, jobs_root_agent],
     tools=[_search_tool],  # lets the LLM explicitly hand off; no search tool here
 )
+
 root_agent = orchestrator_agent
 
 __all__ = ["root_agent"]
 
+from google.adk.apps.app import App
 
-
+app = App(root_agent=root_agent, name="app")
