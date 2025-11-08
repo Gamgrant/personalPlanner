@@ -1,3 +1,5 @@
+streamlit run app.py
+
 # resume in latex
 !!! run this first 
 chmod +x resume_customization/bootstrap_tex.sh
