@@ -7,7 +7,7 @@ import os
 import os.path
 import re
 import json
-from typing import List
+from typing import List, Optional
 
 import requests
 from googleapiclient.errors import HttpError
@@ -135,8 +135,7 @@ def _fetch_description_from_url(url: str) -> str:
         return ""
 
 # ---------- Core tool ----------
-
-def backfill_job_descriptions(max_rows: int | None = None) -> str:
+def backfill_job_descriptions(max_rows: Optional[int] = None) -> str:
     """
     Look at 'Job_search_Database' (first sheet):
 
