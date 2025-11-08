@@ -1,24 +1,22 @@
-# Core web framework
 fastapi
-uvicorn[standard]
-
-# Google ADK / GenAI
+uvicorn
 google-adk
+
+# GenAI SDK used via `from google.genai import types`
 google-genai
 
-# HTTP + utilities
-requests
-python-dotenv
+# Google API / OAuth stack used by your helpers and agents
+google-api-python-client
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
 
-# Timezone / parsing helpers (you used these)
+# Timezone + datetime utilities
 tzlocal
 dateparser
 
-# Google APIs (for Gmail, Sheets, Docs, Drive integrations)
-google-api-python-client
-google-auth
-google-auth-httplib2
-google-auth-oauthlib
+# .env loading
+python-dotenv
 
-# (Optional but common) Pydantic explicitly, in case of version pinning
-pydantic>=2.0.0
+# Common helper
+requests

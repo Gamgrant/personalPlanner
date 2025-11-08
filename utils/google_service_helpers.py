@@ -136,8 +136,17 @@ def _get_service_credentials(service_label: str, scopes: List[str]) -> Credentia
         if creds and creds.expired and creds.refresh_token:
             print(f"[{service_label}] Refreshing expired credentials…")
             creds.refresh(Request())
-            with open(token_path, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
+            try:
+                with open(token_path, "w", encoding="utf-8") as f:
+                    f.write(creds.to_json())
+            except PermissionError:
+                # Likely running in a read-only environment (e.g., Cloud Run).
+                # That's okay: we can still use the refreshed in-memory credentials.
+                print(
+                    f"[{service_label}] Warning: cannot write refreshed token to {token_path} "
+                    "(read-only filesystem). Continuing with in-memory credentials."
+                )
+
         else:
             if not os.path.exists(credentials_path):
                 raise FileNotFoundError(

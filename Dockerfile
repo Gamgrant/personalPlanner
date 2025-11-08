@@ -1,29 +1,54 @@
-# Use Python 3.12 base image
-FROM python:3.12-slim
+# -------------------------------
+# Base image
+# -------------------------------
+# Use a small Python image that still has everything we need
+FROM python:3.11-slim
 
-# Where in the container your app will live
+# -------------------------------
+# Working directory
+# -------------------------------
 WORKDIR /app
 
-# Optional: some sane defaults
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# Install system dependencies (only if you need build tools; safe for now)
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
-# Make sure requirements.txt is in your project root before build
+# -------------------------------
+# Python dependencies
+# -------------------------------
+# Install dependencies first so Docker can cache this layer
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of your code into the container
+# -------------------------------
+# Non-root user (best practice)
+# -------------------------------
+RUN adduser --disabled-password --gecos "" myuser && \
+    chown -R myuser:myuser /app
+
+# -------------------------------
+# Copy application code
+# -------------------------------
+# This copies:
+#   - orchestrator/, calendar_service/, gmail_service/, etc.
+#   - utils/
+#   - .creds/  (credentials.json, token.json, .env)
+#   - main.py
 COPY . .
 
-# Cloud Run sets PORT dynamically; default to 8080 for local
-ENV PORT=8080
+USER myuser
 
-# Start the FastAPI server using uvicorn
-# server:app  -> server.py file, app = FastAPI() instance
-CMD exec uvicorn server:app --host 0.0.0.0 --port $PORT
+# -------------------------------
+# Environment
+# -------------------------------
+# Cloud Run sets $PORT automatically; default to 8080 for local dev
+ENV PORT=8080
+ENV PYTHONUNBUFFERED=1
+
+# If you want, you can hard-set defaults here (optional),
+# but your .creds/.env is already being loaded by your code:
+# ENV GOOGLE_GENAI_USE_VERTEXAI=True
+# ENV GOOGLE_CLOUD_LOCATION=us-central1
+# ENV GOOGLE_CLOUD_PROJECT=personalplanner-476218
+
+# -------------------------------
+# Start FastAPI via Uvicorn
+# -------------------------------
+# main:app → main.py file, `app` FastAPI instance
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT"]

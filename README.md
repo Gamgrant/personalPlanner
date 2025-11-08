@@ -1,4 +1,16 @@
+
+
+# streamlit:
+1) to run : 
 streamlit run app.py
+
+
+
+
+---
+
+
+
 
 # resume in latex
 !!! run this first 
@@ -9,7 +21,6 @@ chmod +x resume_customization/bootstrap_tex.sh
 uv pip install --upgrade pip && uv add pymupdf pyside6 pillow && \
 ( command -v tectonic >/dev/null 2>&1 || ./resume_customization/bootstrap_tex.sh || true ) && \
 uv run python resume_customization/build_resume.py --open
-
 
 # in the future to build latex, just run :
 uv run build-resume

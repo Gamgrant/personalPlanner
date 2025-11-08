@@ -1,0 +1,12 @@
+# Files/folders we DON'T want in the build:
+.git
+.gitignore
+.venv
+__pycache__/
+*.pyc
+.DS_Store
+talk_to_deployed_agents.ipynb
+sessions.db
+
+# IMPORTANT: DO NOT ignore .creds
+# (so no ".creds" or "*.json" lines here)
