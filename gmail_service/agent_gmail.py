@@ -204,7 +204,7 @@ def send_email(
 # Search Messages
 # ======================================================
 
-def search_messages(query: str, max_results: int | None = None) -> list[str]:
+def search_messages(query: str, max_results: Optional[int] = None) -> list[str]:
     """
     Search Gmail messages by query string and return a list of summaries.
 

@@ -64,7 +64,7 @@ def search_events(
     query: Optional[str] = None,
     time_min: Optional[str] = None,
     time_max: Optional[str] = None,
-    max_results: int | None = None,
+    max_results: Optional[int] = None,
     calendar_id: str = "primary"
 ) -> list[str]:
     service = get_calendar_service()
@@ -299,7 +299,7 @@ def delete_event(event_id: str, calendar_id: str = "primary", send_updates: str 
         raise ValueError(f"Failed to delete event: {str(error)}")
 
 
-def list_events(max_results: int | None = None) -> list[str]:
+def list_events(max_results: Optional[int] = None) -> list[str]:
     """
     List upcoming events starting from now.
 

@@ -55,7 +55,7 @@ def get_drive_service() -> object:
 # ------------------------------------------
 # Tools
 # ------------------------------------------
-def list_docs(max_results: int | None = None) -> List[str]:
+def list_docs(max_results: Optional[int] = None) -> List[str]:
     """
     List Google Docs files accessible to the user.
 

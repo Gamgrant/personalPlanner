@@ -286,7 +286,7 @@ def search_jobs(
     query: str,
     companies: Optional[List[str]] = None,
     session: Optional[dict] = None,
-    max_results: int | None = None,
+    max_results: Optional[int] = None
 ) -> str:
     companies = _get_companies(session, companies)
     years_exp = _parse_experience(query)
@@ -353,7 +353,7 @@ def find_jobs_by_title_in_last_days(
     days: int,
     companies: Optional[List[str]] = None,
     session: Optional[dict] = None,
-    max_results: int | None = None,
+    max_results: Optional[int] = None
 ) -> str:
     """
     Core for prompts like:
@@ -416,7 +416,7 @@ def find_jobs_by_title_in_last_days(
 def list_recent_jobs(
     companies: Optional[List[str]] = None,
     session: Optional[dict] = None,
-    max_results: int | None = None,
+    max_results: Optional[int] = None
 ) -> str:
     companies = _get_companies(session, companies)
 
@@ -461,7 +461,7 @@ def list_jobs_in_last_months(
     months: int = 1,
     companies: Optional[List[str]] = None,
     session: Optional[dict] = None,
-    max_results: int | None = None,
+    max_results: Optional[int] = None
 ) -> str:
     companies = _get_companies(session, companies)
 
