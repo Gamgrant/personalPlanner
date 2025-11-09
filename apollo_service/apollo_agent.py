@@ -16,7 +16,7 @@ from google.genai import types
 
 MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
 
-APOLLO_API_KEY = "" # set this in your env
+APOLLO_API_KEY = "ha52Fyh29mmmdhZ7gRbSmA" # set this in your env
 if not APOLLO_API_KEY:
     # allow override for local quick testing, but don't hardcode in prod
     APOLLO_API_KEY = os.environ.get("APOLLO_API_KEY_HARDCODE", "")
@@ -34,12 +34,12 @@ SCOPES = [
 
 # We’ll try these names in order and use the first that exists
 CANDIDATE_SPREADSHEET_NAMES = [
-    "jobs_search_database",
-    "job_search_spredsheet",
+    "Job_Search_Database",
+    "job_search_spreadsheet",
 ]
 
 # Sheet that contains the jobs + website column
-INPUT_SHEET_NAME = "Input"
+INPUT_SHEET_NAME = "Sheet1"
 
 # We will:
 # - detect "Website" column dynamically

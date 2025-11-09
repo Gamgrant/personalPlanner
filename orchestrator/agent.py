@@ -86,6 +86,7 @@ You are the top-level coordinator.
 - General web/public info → google_search_agent (Google Programmable Search; API key; **no OAuth, no scraping**)
 - Official job listings (ATS) → ats_jobs_agent (Greenhouse/Lever public APIs; **no scraping**)
 - Professional contact search / outreach / people finder → apollo_agent (Apollo.io official API; **no scraping**)
+- Recruiter discovery & outreach enrichment for companies in the jobs sheet → apollo_outreach_agent (uses Apollo People Search + /people/match to find recruiter contacts and write Outreach Name & Outreach email into the jobs_search_database sheet)
 
 ### Gmail intent examples (route to google_gmail_agent)
 - “search my inbox for …”, “find unread from …”, “show thread about …”
@@ -132,10 +133,10 @@ The job system includes:
 2. **job_search_sheets_agent (BigQuery/Sheets Storage)** — Appends structured job data to the 'Job_search_Database' Google Sheet.  
 3. **job_description_backfill_agent (UI/Enrichment)** — Visits URLs or uses APIs to fill in missing descriptions or metadata.  
 4. **query_parser_agent** — Parses natural-language job search queries into structured filters (title, location, experience, degree).
+5. **apollo_outreach_agent** — When asked to “find recruiters for this company and add them to my sheet”, use Apollo.io to (a) read the company Website/domain from the jobs sheet, (b) call People Search for recruiter / TA roles, (c) call /people/match for the top candidate to reveal a work email (uses credits), and (d) write Outreach Name & Outreach email back into the jobs_search_database / Job_search_Database sheet.
 
 All these subagents are managed internally by `manager_agent`, which orchestrates them through a pipeline (`job_search_pipeline`).  
 You do **not** need to call them individually — just route job-related queries to `manager_agent`.
-
 
 ### State handoff — MUST
 - Always pass `session.state` (includes `time_context`) with `transfer_to_agent`.
@@ -161,7 +162,7 @@ from google_sheets_service.agent_google_sheets import google_sheets_agent
 from google_drive_service.agent_google_drive import google_drive_agent
 from google_search_service.agent_google_search import google_search_agent
 from jobs_service.jobs_agent import root_agent as jobs_root_agent  
-
+from apollo_service.apollo_agent import apollo_outreach_agent as apollo_agent
 # from TESTING_apollo_service.apollo_agent import apollo_agent  # if present
 
 # Hook up search agent as AgentTool 
@@ -177,7 +178,7 @@ orchestrator_agent = Agent(
     name="orchestrator",
     description=ORCH_INSTRUCTIONS,
     generate_content_config=types.GenerateContentConfig(temperature=0.2),
-    sub_agents=[calendar_agent, google_docs_agent, gmail_agent, google_sheets_agent, google_drive_agent, jobs_root_agent],
+    sub_agents=[calendar_agent, google_docs_agent, gmail_agent, google_sheets_agent, google_drive_agent, jobs_root_agent, apollo_agent],
     tools=[_search_tool],  # lets the LLM explicitly hand off; no search tool here
 )
 
