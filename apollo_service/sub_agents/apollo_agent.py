@@ -1,7 +1,6 @@
-#!/usr/bin/env python3
 import os
 import re
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 import requests
 from googleapiclient.errors import HttpError
@@ -16,7 +15,7 @@ from google.genai import types
 
 MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
 
-APOLLO_API_KEY = "ha52Fyh29mmmdhZ7gRbSmA" # set this in your env
+APOLLO_API_KEY = ""
 if not APOLLO_API_KEY:
     # allow override for local quick testing, but don't hardcode in prod
     APOLLO_API_KEY = os.environ.get("APOLLO_API_KEY_HARDCODE", "")
@@ -32,18 +31,14 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
 ]
 
-# We’ll try these names in order and use the first that exists
+# Candidate spreadsheet names to search for
 CANDIDATE_SPREADSHEET_NAMES = [
     "Job_Search_Database",
     "job_search_spreadsheet",
 ]
 
-# Sheet that contains the jobs + website column
+# Name of the sheet/tab that holds job rows
 INPUT_SHEET_NAME = "Sheet1"
-
-# We will:
-# - detect "Website" column dynamically
-# - detect "Outreach Name" and "Outreach email" columns dynamically
 
 
 # ---------------------------------------------------
@@ -84,7 +79,7 @@ def _find_spreadsheet_id() -> Optional[str]:
 
 def _get_header_map(spreadsheet_id: str) -> Dict[str, int]:
     """
-    Read the header row from Input!A1:Z1 and build a map of
+    Read the header row from <INPUT_SHEET_NAME>!A1:Z1 and build a map of
     normalized header -> column index (0-based).
     """
     sheets = get_sheets_service()
@@ -95,7 +90,7 @@ def _get_header_map(spreadsheet_id: str) -> Dict[str, int]:
         ).execute()
         values = res.get("values", []) or []
         if not values:
-            raise ValueError("No header row found in Input sheet.")
+            raise ValueError(f"No header row found in {INPUT_SHEET_NAME}.")
         header_row = values[0]
     except HttpError as e:
         raise ValueError(f"Failed to read header row: {e}")
@@ -111,7 +106,7 @@ def _get_header_map(spreadsheet_id: str) -> Dict[str, int]:
 
 def _normalize_domain(website: str) -> Optional[str]:
     """
-    Extract domain from a website URL or domain-ish string.
+    Extract domain from a website URL or domain-like string.
     e.g. https://www.stripe.com/careers -> stripe.com
     """
     if not website:
@@ -124,6 +119,22 @@ def _normalize_domain(website: str) -> Optional[str]:
     # Take up to first slash
     w = w.split("/")[0].strip()
     return w or None
+
+
+def _col_letter(idx_zero_based: int) -> str:
+    """
+    Convert 0-based column index to A1-style column letter.
+    0 -> A, 1 -> B, ..., 25 -> Z, 26 -> AA, etc.
+    """
+    n = idx_zero_based
+    letters = ""
+    while True:
+        n, r = divmod(n, 26)
+        letters = chr(ord("A") + r) + letters
+        if n == 0:
+            break
+        n -= 1
+    return letters
 
 
 # ---------------------------------------------------
@@ -143,7 +154,7 @@ def _headers() -> Dict[str, str]:
 def search_recruiters_at_company(domain: str, per_page: int = 5) -> List[Dict[str, Any]]:
     """
     /mixed_people/search for recruiter-type roles at the given company domain.
-    This does NOT unlock new emails; it's just candidate discovery.
+    This does NOT unlock new emails; it's for candidate discovery.
     """
     url = f"{BASE_URL}/mixed_people/search"
 
@@ -168,7 +179,6 @@ def search_recruiters_at_company(domain: str, per_page: int = 5) -> List[Dict[st
 
     resp = requests.post(url, headers=_headers(), json=payload)
     if not resp.ok:
-        # soft fail: just return no candidates; caller decides
         return []
 
     data = resp.json()
@@ -176,16 +186,19 @@ def search_recruiters_at_company(domain: str, per_page: int = 5) -> List[Dict[st
     return people
 
 
-def match_person_for_email(
+def match_person_for_contact(
     first_name: Optional[str] = None,
     last_name: Optional[str] = None,
     domain: Optional[str] = None,
     person_id: Optional[str] = None,
     linkedin_url: Optional[str] = None,
-) -> Optional[str]:
+) -> Tuple[Optional[str], Optional[str]]:
     """
-    /people/match to retrieve a real email for one person.
-    This is the call that consumes a credit IF Apollo returns enriched data.
+    /people/match to retrieve work email (and, if available in response) phone number
+    for one person.
+
+    Returns:
+        (work_email, work_phone) — either may be None.
     """
     url = f"{BASE_URL}/people/match"
 
@@ -195,42 +208,65 @@ def match_person_for_email(
         "last_name": last_name,
         "domain": domain,
         "linkedin_url": linkedin_url,
-        "reveal_personal_emails": False,  # stay with work emails only
-        # Do NOT send reveal_phone_number -> no webhook requirement
+        "reveal_personal_emails": False,
+        # We do NOT set reveal_phone_number here (that flow requires a webhook).
     }
     payload = {k: v for k, v in payload.items() if v}
 
     if not payload:
-        return None
+        return (None, None)
 
     resp = requests.post(url, headers=_headers(), json=payload)
     if not resp.ok:
-        return None
+        return (None, None)
 
     data = resp.json()
     person = data.get("person") or {}
 
-    # Some responses use person.email directly
+    # ---- Email selection ----
     direct_email = person.get("email")
+    work_email: Optional[str] = None
     if direct_email:
-        return direct_email
+        work_email = direct_email
+    else:
+        emails = person.get("email_addresses") or []
+        for e in emails:
+            if not isinstance(e, dict):
+                continue
+            addr = e.get("email")
+            etype = (e.get("type") or "").lower()
+            if addr:
+                if etype == "work":
+                    work_email = addr
+                    break
+                if not work_email:
+                    work_email = addr
 
-    # Otherwise look in email_addresses[]
-    emails = person.get("email_addresses") or []
-    work_email = None
-    for e in emails:
-        if not isinstance(e, dict):
-            continue
-        addr = e.get("email")
-        etype = e.get("type")
-        if addr:
-            if etype == "work":
-                work_email = addr
-                break
-            if not work_email:
-                work_email = addr
+    # ---- Phone selection (best-effort from response) ----
+    work_phone: Optional[str] = None
 
-    return work_email
+    # Some Apollo responses expose phone_numbers / phone_number fields
+    phones = person.get("phone_numbers") or person.get("phones") or []
+    if isinstance(phones, list):
+        for p in phones:
+            if not isinstance(p, dict):
+                continue
+            number = p.get("number") or p.get("phone") or p.get("raw_number")
+            ptype = (p.get("type") or "").lower()
+            if number:
+                if ptype in ("work", "work_direct"):
+                    work_phone = number
+                    break
+                if not work_phone:
+                    work_phone = number
+
+    # Fallbacks
+    if not work_phone:
+        maybe_single = person.get("phone_number") or person.get("phone")
+        if isinstance(maybe_single, str) and maybe_single.strip():
+            work_phone = maybe_single.strip()
+
+    return (work_email, work_phone)
 
 
 # ---------------------------------------------------
@@ -242,53 +278,61 @@ def populate_outreach_from_apollo(
 ) -> str:
     """
     Workflow:
-      1. Locate jobs spreadsheet (jobs_search_database / job_search_spredsheet).
-      2. In 'Input' sheet, find:
-           - Website column (by header 'website')
-           - Outreach Name column (by header 'outreach name')
-           - Outreach email column (by header 'outreach email')
+      1. Locate jobs spreadsheet.
+      2. In INPUT_SHEET_NAME, detect columns:
+           - 'Website'
+           - 'Outreach Name'
+           - 'Outreach email'
+           - 'Outreach Phone Number' (optional; may also match 'Outreach phone'/'Recruiter phone')
       3. For each row with a Website:
-           - Extract domain from Website
-           - /mixed_people/search for recruiter-type people at that domain
-           - Take top 1 candidate
-           - /people/match using id + name + domain
+           - Extract company domain.
+           - /mixed_people/search for recruiter-type people at that domain.
+           - Take the top candidate.
+           - /people/match to retrieve work email (and any available phone).
            - Write:
-                Outreach Name  = matched recruiter's full name
-                Outreach email = matched work email
-         Existing values in these two columns will be overwritten
-         for rows we successfully process.
+                Outreach Name         = "<First> <Last>"
+                Outreach email        = work email (if found)
+                Outreach Phone Number = work phone (if found and column exists)
+         Only rows with successful matches are updated.
     """
     spreadsheet_id = _find_spreadsheet_id()
     if not spreadsheet_id:
         raise ValueError(
-            "Could not find 'jobs_search_database' or 'job_search_spredsheet' in Drive."
+            "Could not find 'Job_Search_Database' or 'job_search_spreadsheet' in Drive."
         )
 
     sheets = get_sheets_service()
     header_map = _get_header_map(spreadsheet_id)
 
-    # Identify relevant columns
     website_col_idx = None
     outreach_name_col_idx = None
     outreach_email_col_idx = None
+    outreach_phone_col_idx = None
 
     for name, idx in header_map.items():
         if name == "website":
             website_col_idx = idx
         elif name == "outreach name":
             outreach_name_col_idx = idx
-        elif name == "outreach email":
+        elif name in ("outreach email", "outreach_email"):
             outreach_email_col_idx = idx
+        elif name in (
+            "outreach phone number",
+            "outreach phone",
+            "recruiter phone",
+            "recruiter phone number",
+        ):
+            outreach_phone_col_idx = idx
 
     if website_col_idx is None:
-        raise ValueError("No 'Website' column header found in Input sheet.")
+        raise ValueError("No 'Website' column header found in sheet.")
 
     if outreach_name_col_idx is None or outreach_email_col_idx is None:
         raise ValueError(
-            "Missing 'Outreach Name' or 'Outreach email' column header in Input sheet."
+            "Missing 'Outreach Name' or 'Outreach email' column header in sheet."
         )
 
-    # Read all rows under headers
+    # Read data rows
     try:
         res = sheets.spreadsheets().values().get(
             spreadsheetId=spreadsheet_id,
@@ -301,27 +345,26 @@ def populate_outreach_from_apollo(
     if not rows:
         return "No job rows found under headers."
 
-    updates = []
-    start_row_index = 2  # because data starts at row 2
+    updates: List[Dict[str, Any]] = []
+    start_row_index = 2  # data starts from row 2
 
     for i, row in enumerate(rows):
         sheet_row = start_row_index + i
 
-        # Get website value
         website = row[website_col_idx] if website_col_idx < len(row) else ""
         domain = _normalize_domain(website)
         if not domain:
             continue
 
-        # Search for recruiter candidates at this domain
         candidates = search_recruiters_at_company(domain, per_page=per_company_candidates)
         if not candidates:
             continue
 
-        # Take the top candidate
         top = candidates[0]
         first = (top.get("first_name") or "").strip()
         last = (top.get("last_name") or "").strip()
+        full_name = (first + " " + last).strip()
+
         pid = top.get("id") or top.get("person_id")
         org = top.get("organization") or {}
         org_domain = (
@@ -330,10 +373,8 @@ def populate_outreach_from_apollo(
             or domain
         )
         linkedin = top.get("linkedin_url")
-        full_name = (first + " " + last).strip() or ""
 
-        # Match to reveal work email (this is where credits get used)
-        email = match_person_for_email(
+        email, phone = match_person_for_contact(
             first_name=first or None,
             last_name=last or None,
             domain=org_domain,
@@ -341,36 +382,46 @@ def populate_outreach_from_apollo(
             linkedin_url=linkedin or None,
         )
 
-        if not (full_name or email):
+        # If we got nothing meaningful, skip
+        if not (full_name or email or phone):
             continue
 
-        # Ensure row has enough columns to write into
-        # We'll build the update as a range like: Input!<col_letter><row>:<col_letter><row>
-        def col_letter(idx_zero_based: int) -> str:
-            # 0 -> A, 1 -> B, ... 25 -> Z, 26 -> AA ...
-            n = idx_zero_based
-            letters = ""
-            while True:
-                n, r = divmod(n, 26)
-                letters = chr(ord('A') + r) + letters
-                if n == 0:
-                    break
-                n -= 1
-            return letters
+        # Build per-cell updates so we don't require contiguous columns
+        # Outreach Name
+        if full_name:
+            name_col_letter = _col_letter(outreach_name_col_idx)
+            updates.append(
+                {
+                    "range": f"{INPUT_SHEET_NAME}!{name_col_letter}{sheet_row}",
+                    "values": [[full_name]],
+                }
+            )
 
-        name_col_letter = col_letter(outreach_name_col_idx)
-        email_col_letter = col_letter(outreach_email_col_idx)
+        # Outreach email
+        if email:
+            email_col_letter = _col_letter(outreach_email_col_idx)
+            updates.append(
+                {
+                    "range": f"{INPUT_SHEET_NAME}!{email_col_letter}{sheet_row}",
+                    "values": [[email]],
+                }
+            )
 
-        rng = f"{INPUT_SHEET_NAME}!{name_col_letter}{sheet_row}:{email_col_letter}{sheet_row}"
-        updates.append(
-            {
-                "range": rng,
-                "values": [[full_name, email or ""]],
-            }
-        )
+        # Outreach Phone Number (only if column exists and we have a value)
+        if outreach_phone_col_idx is not None and phone:
+            phone_col_letter = _col_letter(outreach_phone_col_idx)
+            updates.append(
+                {
+                    "range": f"{INPUT_SHEET_NAME}!{phone_col_letter}{sheet_row}",
+                    "values": [[phone]],
+                }
+            )
 
     if not updates:
-        return "No outreach contacts found or written. Check Website values, Apollo filters, and credits."
+        return (
+            "No outreach contacts found or written. "
+            "Check Website values, Apollo filters, credits, and column headers."
+        )
 
     # Batch update sheet
     try:
@@ -384,26 +435,28 @@ def populate_outreach_from_apollo(
     except HttpError as e:
         raise ValueError(f"Failed to write outreach contacts: {e}")
 
-    return f"Updated Outreach Name & Outreach email for {len(updates)} row(s) using Apollo."
+    return (
+        f"Updated Outreach Name, Outreach email, and Outreach Phone Number (when available) "
+        f"for {len(set(u['range'].split('!')[1].rstrip('0123456789') + str(u['range'].split('!')[1].lstrip('ABCDEFGHIJKLMNOPQRSTUVWXYZ')) for u in updates))} row(s) using Apollo."
+    )
 
 
 # ---------------------------------------------------
 # AGENT DEFINITION
 # ---------------------------------------------------
 
-apollo_outreach_agent: Agent = Agent(
+apollo_outreach_agent = Agent(
     model=MODEL,
     name="apollo_outreach_agent",
     description=(
         "Uses Apollo.io to find recruiter contacts for companies listed in the jobs sheet. "
-        "Workflow: read Website column from the Input sheet, search recruiters at that domain, "
-        "call /people/match for the top candidate to reveal work email (uses credits), and "
-        "write Outreach Name and Outreach email back into the sheet."
+        "Workflow: read the Website column, search recruiters at that domain, call /people/match "
+        "for the top candidate to retrieve work email and any available phone number, and write "
+        "Outreach Name, Outreach email, and Outreach Phone Number back into the sheet."
     ),
     generate_content_config=types.GenerateContentConfig(temperature=0.0),
-    tools=[
-        populate_outreach_from_apollo,
-    ],
+    tools=[populate_outreach_from_apollo],
+    output_key="spreadsheet_agent_apollo",
 )
 
 __all__ = ["apollo_outreach_agent"]

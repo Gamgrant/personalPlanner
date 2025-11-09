@@ -499,8 +499,10 @@ For each row where Description (F) is present:
 
   (a) Skills
     - Combine both required and preferred skills into a single condensed list.
-    - Normalize to short, clean skill tokens only (e.g., "Python", "SQL", "Machine Learning").
+    - Normalize to short, clean skill tokens only.
     - Do NOT include long phrases or sentences. No extra wording.
+    - Make sure that you give me the complete "preferred" and "desired" set of skills
+    - Capture all the important skills too, not just "Communications"
 
   (b) Years of Experience (YOE)
     - Merge required and preferred experience into a single concise representation.

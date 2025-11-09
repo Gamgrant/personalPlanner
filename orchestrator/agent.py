@@ -168,7 +168,7 @@ from google_sheets_service.agent_google_sheets import google_sheets_agent
 from google_drive_service.agent_google_drive import google_drive_agent
 from google_search_service.agent_google_search import google_search_agent
 from jobs_service.jobs_agent import root_agent as jobs_root_agent  
-from apollo_service.apollo_agent import apollo_outreach_agent as apollo_agent
+from apollo_service.manager_apollo_agent import root_agent as apollo_agent
 from matching_service.matching import match_agent as match_agent
 # from TESTING_apollo_service.apollo_agent import apollo_agent  # if present
 
