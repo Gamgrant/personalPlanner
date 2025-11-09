@@ -13,6 +13,7 @@ from google.genai import types
 from utils.google_service_helpers import get_google_service
 
 MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
+JOB_SEARCH_SPREADSHEET_ID = os.environ.get("JOB_SEARCH_SPREADSHEET_ID").strip()
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -35,18 +36,32 @@ def get_drive_service() -> object:
 # Spreadsheet discovery helpers
 # -------------------------------
 
-def _find_job_search_spreadsheet_id(name: str = "Job_search_Database") -> str:
+import os  # ensure imported at top
+
+def _find_job_search_spreadsheet_id(name: str = "Job_Search_Database") -> str:
     """
-    Locate the job search spreadsheet by exact name across all accessible drives.
+    Locate the job search spreadsheet.
+
+    Priority:
+      1) Hardcoded / env JOB_SEARCH_SPREADSHEET_ID
+      2) Name-based lookup (optionally restricted to JOB_SEARCH_FOLDER_ID)
     """
+    # 1) Hardcoded/env override (primary path)
+    if JOB_SEARCH_SPREADSHEET_ID:
+        return JOB_SEARCH_SPREADSHEET_ID
+
+    # 2) Fallback: Drive search by name (should rarely be used now)
     drive = get_drive_service()
+    folder_id = os.environ.get("JOB_SEARCH_FOLDER_ID")
+
+    base_query = "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
+    if folder_id:
+        base_query += f" and '{folder_id}' in parents"
+
     try:
         resp = drive.files().list(
-            q=(
-                "mimeType='application/vnd.google-apps.spreadsheet' "
-                f"and name='{name}' and trashed=false"
-            ),
-            pageSize=10,
+            q=base_query,
+            pageSize=50,
             fields="files(id,name)",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
@@ -57,9 +72,15 @@ def _find_job_search_spreadsheet_id(name: str = "Job_search_Database") -> str:
     files: List[Dict[str, Any]] = resp.get("files", []) or []
     if not files:
         raise RuntimeError(
-            f"[BACKFILL] Spreadsheet '{name}' not found. "
-            f"Create it or update the name in _find_job_search_spreadsheet_id."
+            f"[BACKFILL] Spreadsheet not found. "
+            f"Set JOB_SEARCH_SPREADSHEET_ID, or create a Google Sheet named '{name}'."
         )
+
+    target_lower = name.lower()
+    for f in files:
+        if (f.get("name") or "").lower() == target_lower:
+            return f["id"]
+
     return files[0]["id"]
 
 

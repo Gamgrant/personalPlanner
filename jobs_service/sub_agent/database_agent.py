@@ -10,6 +10,7 @@ from utils.google_service_helpers import get_google_service  # centralized auth
 
 # Model comes from .env (utils/env_loader has already been called earlier)
 MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
+JOB_SEARCH_SPREADSHEET_ID = os.environ.get("JOB_SEARCH_SPREADSHEET_ID").strip()
 
 # Scopes: read/write Sheets + Drive listing
 SCOPES = [
@@ -165,21 +166,31 @@ def write_sheet_values(
 # -------------------------------
 def _find_job_search_spreadsheet_id(name: str = "Job_Search_Database") -> str:
     """
-    Robustly find spreadsheet ID by name (case-insensitive, across all drives).
-    Preference order:
-      1) exact case-insensitive match
-      2) startswith case-insensitive
-      3) contains case-insensitive
+    Resolve the Job_Search_Database spreadsheet ID.
+
+    Priority:
+      1) Hardcoded/env JOB_SEARCH_SPREADSHEET_ID (explicit and fastest)
+      2) Search Google Drive for a Google Sheet with matching name,
+         optionally restricted to JOB_SEARCH_FOLDER_ID.
     """
+    # 1) Explicit ID (primary)
+    if JOB_SEARCH_SPREADSHEET_ID:
+        return JOB_SEARCH_SPREADSHEET_ID
+
     drive = get_drive_service()
 
     target_lower = name.lower()
     candidates: List[Dict[str, Any]] = []
     page_token: Optional[str] = None
 
+    folder_id = os.environ.get("JOB_SEARCH_FOLDER_ID")
+    base_query = "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
+    if folder_id:
+        base_query += f" and '{folder_id}' in parents"
+
     while True:
         resp = drive.files().list(
-            q="mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
+            q=base_query,
             pageSize=1000,
             fields="nextPageToken, files(id,name,webViewLink)",
             orderBy="modifiedTime desc",
@@ -196,25 +207,23 @@ def _find_job_search_spreadsheet_id(name: str = "Job_Search_Database") -> str:
     if not candidates:
         raise ValueError(
             f"No spreadsheets available to search. "
-            f"Ensure Drive access and sharing permissions are set."
+            f"Ensure Drive access and sharing permissions are set, "
+            f"or set JOB_SEARCH_SPREADSHEET_ID."
         )
 
-    # 1) exact (ci)
     for f in candidates:
         if (f.get("name") or "").lower() == target_lower:
             return f["id"]
-    # 2) startswith (ci)
     for f in candidates:
         if (f.get("name") or "").lower().startswith(target_lower):
             return f["id"]
-    # 3) contains (ci)
     for f in candidates:
         if target_lower in (f.get("name") or "").lower():
             return f["id"]
 
     raise ValueError(
         f"Spreadsheet named like '{name}' not found in Drive. "
-        f"Consider renaming to '{name}' exactly or update your config."
+        f"Either rename the sheet or set JOB_SEARCH_SPREADSHEET_ID."
     )
 
 def _get_first_sheet_name(spreadsheet_id: str) -> str:

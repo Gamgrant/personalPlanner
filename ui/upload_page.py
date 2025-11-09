@@ -1,17 +1,36 @@
 # upload_page.py
 import io
 import re
-
+import os
 import streamlit as st
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
+import sys
+from pathlib import Path
+
+import streamlit as st
+from dotenv import load_dotenv
+
+from utils.routing import find_project_root, ensure_google_oauth_env
+
+# ---- Make sure Python can see the project root (personalPlanner) ----
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
+
+# 🔹 Load .env from .creds
+env_path = ROOT / ".creds" / ".env"
+load_dotenv(env_path)
+
+# 🔹 Normalize GOOGLE_OAUTH_* to absolute paths
+ensure_google_oauth_env(__file__)
 
 from utils.google_service_helpers import get_drive_service, get_sheets_service
+# ---------- Google API config ---------
 
-# ---------- Google API config ----------
-DRIVE_RESUMES_FOLDER_ID  = "1oWZxO8czQvwjZ-RroN7Lx-jzZxcrzh2Q"
-DRIVE_PROJECTS_FOLDER_ID = "1Q9iuIWIfrClRdUGs38oTzYpsUTT2J6J-"
-SHEET_ID   = "1mVI9o4D4_6g2oS0dqJFCk6jVjgArtN6vnFKV6l7G78c"
-SHEET_RANGE = "Links!A:A"  # sheet named 'Links', column A
+DRIVE_RESUMES_FOLDER_ID  = os.environ.get("DRIVE_RESUMES_FOLDER_ID").strip()
+DRIVE_PROJECTS_FOLDER_ID =  os.environ.get("DRIVE_PROJECTS_FOLDER_ID").strip()
+SHEET_ID   =  os.environ.get("SHEET_ID_LINKS").strip()
+SHEET_RANGE =  os.environ.get("SHEET_RANGE").strip()
 
 
 @st.cache_resource
