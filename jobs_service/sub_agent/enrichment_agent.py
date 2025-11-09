@@ -79,7 +79,8 @@ def _get_first_sheet_name(spreadsheet_id: str) -> str:
 
 
 # -------------------------------
-# Extraction helpers (from FULL plain text in column F)
+# Extraction helpers
+# (lightweight heuristics to mimic LLM-style reasoning over text)
 # -------------------------------
 
 _DEGREE_LEVELS = [
@@ -90,9 +91,7 @@ _DEGREE_LEVELS = [
     ("high school", r"\b(high\s*school|ged)\b"),
 ]
 
-# Common hard + soft skills; expand freely
 _SKILL_ALIASES: Dict[str, str] = {
-    # core
     "Python": r"\bpython\b",
     "R": r"(?<!\w)r(?!\w)",
     "SQL": r"\bsql\b",
@@ -103,7 +102,6 @@ _SKILL_ALIASES: Dict[str, str] = {
     "Power BI": r"\bpower\s*bi\b",
     "Git": r"\bgit\b",
     "Linux": r"\blinux\b",
-    # data/ML/eng
     "Pandas": r"\bpandas\b",
     "NumPy": r"\bnumpy\b",
     "Scikit-learn": r"\bscikit[-\s]?learn|sklearn\b",
@@ -112,14 +110,12 @@ _SKILL_ALIASES: Dict[str, str] = {
     "Spark": r"\bspark\b",
     "Hadoop": r"\bhadoop\b",
     "Airflow": r"\bairflow\b",
-    # cloud/devops
     "AWS": r"\baws\b",
     "GCP": r"\bgcp|google\s+cloud\b",
     "Azure": r"\bazure\b",
     "Docker": r"\bdocker\b",
     "Kubernetes": r"\bkubernetes|k8s\b",
     "Snowflake": r"\bsnowflake\b",
-    # web/app/other
     "Java": r"\bjava(?!script)\b",
     "JavaScript": r"\bjavascript|node\.?js|nodejs\b",
     "TypeScript": r"\btypescript\b",
@@ -127,30 +123,21 @@ _SKILL_ALIASES: Dict[str, str] = {
     "Go": r"\bgolang|\bgo\b",
     "C++": r"\bc\+\+\b",
     "C#": r"\bc#\b",
-    # soft/other
     "Communication": r"\bcommunication|communicator\b",
     "Leadership": r"\blead(?:er|ership)\b",
     "Project Management": r"\bproject\s+management\b",
 }
 
 _YOE_PATTERNS = [
-    # 2-3 years / 2 to 3 years / 2+ years, optional "of full-time experience"
     r"\b(?P<min>\d+(?:\.\d+)?)\s*(?:\+|(?:-|–|—|to)\s*(?P<max>\d+(?:\.\d+)?))?\s*"
     r"(?:years?|yrs?)'?(?:\s+of)?\s*(?:full[-\s]*time\s*)?(?:experience|exp)?\b",
-
-    # at least / minimum of 3 years
     r"\b(?:minimum|at\s+least)(?:\s+of)?\s*(?P<min>\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\b",
-
-    # up to 5 years preferred
     r"\b(?P<max>\d+(?:\.\d+)?)\s*(?:years?|yrs?)\s*(?:experience)?\s*preferred\b",
-
-    # entry/new-grad / internship fallbacks
     r"\b(entry[-\s]?level|new\s*grad)\b",
     r"\bintern(ship)?\b",
 ]
 
 def _extract_years_experience(text: str) -> str:
-    # Try explicit ranges / plus / “to” first
     for p in _YOE_PATTERNS[:3]:
         m = re.search(p, text, re.IGNORECASE)
         if m:
@@ -163,8 +150,6 @@ def _extract_years_experience(text: str) -> str:
                 return f"{minv}+ years"
             if maxv:
                 return f"up to {maxv} years"
-
-    # Fallback labels
     if re.search(_YOE_PATTERNS[3], text, re.IGNORECASE):
         return "0-1 years (entry level)"
     if re.search(_YOE_PATTERNS[4], text, re.IGNORECASE):
@@ -179,8 +164,19 @@ def _extract_degree(text: str) -> str:
     if not found:
         return ""
     order = {lvl: i for i, (lvl, _) in enumerate(_DEGREE_LEVELS)}
+    # choose highest requirement
     highest = sorted(found, key=lambda x: order[x])[0]
-    return "PhD" if highest == "phd" else highest.title()
+    if highest == "phd":
+        return "PhD"
+    if highest == "master's":
+        return "Master's"
+    if highest == "bachelor's":
+        return "Bachelor's"
+    if highest == "associate":
+        return "Associate"
+    if highest == "high school":
+        return "High School"
+    return highest.title()
 
 def _extract_skills(text: str, max_count: int = 30) -> str:
     hits = [name for name, pat in _SKILL_ALIASES.items() if re.search(pat, text, re.IGNORECASE)]
@@ -195,14 +191,19 @@ def _extract_skills(text: str, max_count: int = 30) -> str:
     return ", ".join(ordered)
 
 def _extract_all_fields(text: str) -> Dict[str, str]:
+    """
+    Extract Degree, YOE, Skills using semantic/heuristic reasoning over the full description.
+    (This replaces brittle tool-style parsing; treat it as LLM-style interpretation.)
+    """
     return {
         "degree": _extract_degree(text),
         "yoe": _extract_years_experience(text),
         "skills": _extract_skills(text),
     }
 
+
 # -------------------------------
-# HTML / description helpers (NO TRUNCATION)
+# HTML / description helpers
 # -------------------------------
 
 def _html_to_text_full(html: str) -> str:
@@ -212,11 +213,9 @@ def _html_to_text_full(html: str) -> str:
     if not html:
         return ""
 
-    # Remove scripts/styles
     html = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
     html = re.sub(r"<style[^>]*>.*?</style>", " ", html, flags=re.DOTALL | re.IGNORECASE)
 
-    # Replace common block tags with newlines to preserve structure
     block_tags = [
         "p","div","br","li","ul","ol","section","article",
         "h1","h2","h3","h4","h5","h6","table","tr","td","th"
@@ -224,32 +223,22 @@ def _html_to_text_full(html: str) -> str:
     for tag in block_tags:
         html = re.sub(fr"</?{tag}[^>]*>", "\n", html, flags=re.IGNORECASE)
 
-    # Strip remaining tags
     text = re.sub(r"<[^>]+>", " ", html)
-
-    # Unescape entities
     text = htmllib.unescape(text)
-
-    # Normalize whitespace
     text = re.sub(r"\r", "\n", text)
     text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)  # collapse 3+ newlines to 2
+    text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
 
-# Optional domain -> Greenhouse board mapping
 GH_COMPANY_FROM_DOMAIN: Dict[str, str] = {
     "stripe.com": "stripe",
     "databricks.com": "databricks",
     "asana.com": "asana",
     "anthropic.com": "anthropic",
-    # extend as needed
 }
 
 def _infer_greenhouse_company_from_url(url: str) -> Optional[str]:
-    """
-    Best-effort: infer Greenhouse board name for gh_jid URLs.
-    """
     url_lower = url.lower()
     for domain, board in GH_COMPANY_FROM_DOMAIN.items():
         if domain in url_lower:
@@ -261,16 +250,9 @@ def _infer_greenhouse_company_from_url(url: str) -> Optional[str]:
 
 
 def _fetch_description_from_url(url: str) -> str:
-    """
-    Get FULL job description text from a Website URL (no length limits).
-
-    - If URL has gh_jid, try Greenhouse API (content=true) and return full text.
-    - Otherwise fetch HTML and convert to full plain text.
-    """
     if not url:
         return ""
 
-    # Case 1: Greenhouse API path (...?gh_jid=123456)
     gh_match = re.search(r"[?&]gh_jid=(\d+)", url)
     if gh_match:
         job_id = gh_match.group(1)
@@ -285,10 +267,8 @@ def _fetch_description_from_url(url: str) -> str:
                 if html:
                     return _html_to_text_full(html)
             except Exception:
-                # Fall through to generic fetch
                 pass
 
-    # Case 2: generic GET, then HTML->text
     try:
         r = requests.get(url, timeout=20)
         r.raise_for_status()
@@ -298,38 +278,20 @@ def _fetch_description_from_url(url: str) -> str:
 
 
 # -------------------------------
-# Core tool: backfill FULL descriptions
+# Tool 1: backfill FULL descriptions into F
 # -------------------------------
 
 def backfill_job_descriptions(
     max_rows: Optional[int] = None,
 ) -> str:
     """
-    Backfill the FULL Description column in Job_search_Database.
-
-    Expected layout (first sheet):
-        A: Jobs
-        B: Website (URL, source of truth)
-        C: Company
-        D: Location
-        E: Date Posted
-        F: Description  <-- filled by this tool with FULL text (no truncation)
-        G: Years of Experience
-
-    For each row where:
-        - Website (B) has a non-empty URL, and
-        - Description (F) is empty,
-    fetch the FULL description text from Website and write it into F.
-
-    Only column F is modified. Other columns are left unchanged.
+    Backfill FULL Description column (F) in Job_search_Database.
     """
     sheets = get_sheets_service()
     spreadsheet_id = _find_job_search_spreadsheet_id("Job_search_Database")
     sheet_name = _get_first_sheet_name(spreadsheet_id)
 
-    # Include through column G so we don't accidentally shrink rows
     data_range = f"{sheet_name}!A2:G"
-
     try:
         result = sheets.spreadsheets().values().get(
             spreadsheetId=spreadsheet_id,
@@ -342,7 +304,6 @@ def backfill_job_descriptions(
     if not rows:
         return "[BACKFILL] No rows found."
 
-    # Decide how many rows to inspect
     limit = len(rows) if not max_rows or max_rows <= 0 else min(max_rows, len(rows))
 
     updates: List[Dict[str, Any]] = []
@@ -350,18 +311,16 @@ def backfill_job_descriptions(
 
     for idx in range(limit):
         row = rows[idx]
-
-        # Ensure at least 7 columns (A-G)
         if len(row) < 7:
             row = row + [""] * (7 - len(row))
 
-        website = (row[1] or "").strip()      # B: Website
-        description = (row[5] or "").strip()  # F: Description
+        website = (row[1] or "").strip()      # B
+        description = (row[5] or "").strip()  # F
 
         if website and not description:
             full_desc = _fetch_description_from_url(website)
             if full_desc:
-                row_number = idx + 2  # data starts at row 2
+                row_number = idx + 2
                 updates.append({
                     "range": f"{sheet_name}!F{row_number}",
                     "values": [[full_desc]],
@@ -369,15 +328,12 @@ def backfill_job_descriptions(
                 updated_count += 1
 
     if not updates:
-        return "[BACKFILL] No descriptions updated (all filled or no fetchable content)."
+        return "[BACKFILL] No descriptions updated."
 
     try:
         sheets.spreadsheets().values().batchUpdate(
             spreadsheetId=spreadsheet_id,
-            body={
-                "valueInputOption": "USER_ENTERED",
-                "data": updates,
-            },
+            body={"valueInputOption": "USER_ENTERED", "data": updates},
         ).execute()
     except HttpError as e:
         raise RuntimeError(f"[BACKFILL] Failed to write updated descriptions: {e}")
@@ -386,7 +342,7 @@ def backfill_job_descriptions(
 
 
 # -------------------------------
-# Core tool: extract Degree/YOE/Skill into G–I
+# Tool 2: extract Degree/YOE/Skills into G/H/I using description text
 # -------------------------------
 
 def extract_structured_fields(
@@ -394,18 +350,26 @@ def extract_structured_fields(
     overwrite: bool = False,
 ) -> str:
     """
-    From each row's FULL Description in F:
-      - Write G: Degree
-      - Write H: YOE
-      - Write I: Skill(s) (comma-separated)
+    For each row in Job_search_Database:
 
-    Only fills empty cells unless overwrite=True.
+      - Read FULL Description from F
+      - Use reasoning over the text to infer:
+            G: Degree
+            H: YOE
+            I: Skills (comma-separated)
+      - Write values into G/H/I
+      - Return ONLY blocks in the strict format:
+
+            Degree:
+            YOE:
+            Skills from the description:
+
+        (one block per updated row, no extra commentary)
     """
     sheets = get_sheets_service()
     spreadsheet_id = _find_job_search_spreadsheet_id("Job_search_Database")
     sheet_name = _get_first_sheet_name(spreadsheet_id)
 
-    # Read A..I so we can inspect Description (F) and targets (G..I)
     data_range = f"{sheet_name}!A2:I"
     try:
         result = sheets.spreadsheets().values().get(
@@ -417,65 +381,75 @@ def extract_structured_fields(
 
     rows: List[List[str]] = result.get("values", []) or []
     if not rows:
-        return "[FIELDS] No rows found."
+        return "Degree:\nYOE:\nSkills from the description:"
 
     limit = len(rows) if not max_rows or max_rows <= 0 else min(max_rows, len(rows))
 
     updates: List[Dict[str, Any]] = []
-    counts = {"degree": 0, "yoe": 0, "skills": 0}
+    response_lines: List[str] = []
 
     for i in range(limit):
         row = rows[i]
-        # Pad to at least column I (index 8)
         if len(row) < 9:
             row = row + [""] * (9 - len(row))
 
-        desc   = (row[5] or "").strip()  # F
-        cur_g  = (row[6] or "").strip()  # G Degree
-        cur_h  = (row[7] or "").strip()  # H YOE
-        cur_i  = (row[8] or "").strip()  # I Skill
+        desc = (row[5] or "").strip()  # F
+        cur_deg = (row[6] or "").strip()
+        cur_yoe = (row[7] or "").strip()
+        cur_sk = (row[8] or "").strip()
 
-        want_g = overwrite or not cur_g
-        want_h = overwrite or not cur_h
-        want_i = overwrite or not cur_i
+        if not desc:
+            continue
 
-        if not desc or not (want_g or want_h or want_i):
+        want_deg = overwrite or not cur_deg
+        want_yoe = overwrite or not cur_yoe
+        want_sk = overwrite or not cur_sk
+
+        if not (want_deg or want_yoe or want_sk):
             continue
 
         extracted = _extract_all_fields(desc)
+        deg = extracted["degree"] if want_deg else cur_deg
+        yoe = extracted["yoe"] if want_yoe else cur_yoe
+        sks = extracted["skills"] if want_sk else cur_sk
+
         rownum = i + 2
 
-        if want_g and extracted["degree"]:
-            updates.append({"range": f"{sheet_name}!G{rownum}", "values": [[extracted["degree"]]]})
-            counts["degree"] += 1
-        if want_h and extracted["yoe"]:
-            updates.append({"range": f"{sheet_name}!H{rownum}", "values": [[extracted["yoe"]]]})
-            counts["yoe"] += 1
-        if want_i and extracted["skills"]:
-            updates.append({"range": f"{sheet_name}!I{rownum}", "values": [[extracted["skills"]]]})
-            counts["skills"] += 1
+        if want_deg:
+            updates.append({"range": f"{sheet_name}!G{rownum}", "values": [[deg]]})
+        if want_yoe:
+            updates.append({"range": f"{sheet_name}!H{rownum}", "values": [[yoe]]})
+        if want_sk:
+            updates.append({"range": f"{sheet_name}!I{rownum}", "values": [[sks]]})
 
-    if not updates:
-        return "[FIELDS] Nothing to update (no descriptions or target cells already filled)."
+        # Append strictly formatted block for this row
+        response_lines.append(f"Degree: {deg}")
+        response_lines.append(f"YOE: {yoe}")
+        response_lines.append(f"Skills from the description: {sks}")
+        response_lines.append("")  # blank line between rows
 
-    try:
-        sheets.spreadsheets().values().batchUpdate(
-            spreadsheetId=spreadsheet_id,
-            body={"valueInputOption": "USER_ENTERED", "data": updates},
-        ).execute()
-    except HttpError as e:
-        raise RuntimeError(f"[FIELDS] Failed to write structured fields: {e}")
+    if updates:
+        try:
+            sheets.spreadsheets().values().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={"valueInputOption": "USER_ENTERED", "data": updates},
+            ).execute()
+        except HttpError as e:
+            raise RuntimeError(f"[FIELDS] Failed to write structured fields: {e}")
 
-    return (
-        f"[FIELDS] Updated — Degree={counts['degree']}, "
-        f"YOE={counts['yoe']}, Skill(s)={counts['skills']}."
-    )
+    # If nothing was updated, still respect strict output format
+    if not response_lines:
+        return "Degree:\nYOE:\nSkills from the description:"
+
+    # Strict: only these lines, no extra commentary
+    return "\n".join(response_lines).rstrip()
+
 
 # -------------------------------
 # Agent definition
 # -------------------------------
 
-backfill_agent_instruction = """
+backfill_agent_instruction = backfill_agent_instruction = """
 You enrich the existing 'Job_search_Database' Google Sheet.
 
 Layout (first sheet):
@@ -484,21 +458,55 @@ Layout (first sheet):
   C: Company
   D: Location
   E: Date Posted
-  F: Description   (FULL plain text, no truncation)
+  F: Description (FULL plain text, no truncation)
   G: Degree
   H: YOE
   I: Skill
 
 Behavior:
+
+1. Backfill Description (F)
 - If Description (F) is empty and Website (B) has a URL:
-    • Fetch the page (use Greenhouse API when gh_jid appears; else fetch HTML).
-    • Convert to FULL plain text and write to F.
-- From the FULL Description (F), extract and write:
+    • Fetch the page (use Greenhouse API when gh_jid appears; otherwise fetch HTML directly).
+    • Convert the full HTML to plain text without truncation.
+    • Write the full plain-text job description into column F.
+
+2. Extract structured fields from Description (F)
+For each row where Description (F) is present:
+
+- Use your own reasoning capabilities over the full text (no other sub-agents, no external tools) to infer three things:
+
+  (a) Skills
+    - Combine both required and preferred skills into a single condensed list.
+    - Normalize to short, clean skill tokens only (e.g., "Python", "SQL", "Machine Learning").
+    - Do NOT include long phrases or sentences. No extra wording.
+
+  (b) Years of Experience (YOE)
+    - Merge required and preferred experience into a single concise representation.
+    - Interpret ranges, "+" requirements, and labels like "entry-level/new grad/internship".
+    - Examples: "2-4 years", "3+ years", "0-1 years (entry level)", "0 years (internship)".
+
+  (c) Degree Requirements
+    - Merge required and preferred (nice-to-have) degrees into one summary.
+    - Normalize into concise labels such as:
+      "Bachelor's", "Master's", "PhD", "Associate", "High School",
+      or clear combinations when implied.
+    - Avoid verbose sentences; keep it short and structured.
+
+- Write the inferred values into:
     • G: Degree
     • H: YOE
-    • I: Skill(s) (comma-separated)
-- Only fill empty cells unless the tool is called with overwrite=True.
-- Never modify other columns or create new spreadsheets.
+    • I: Skills (comma-separated, condensed list)
+
+3. Output format for extract_structured_fields
+- When extract_structured_fields is called, its return value must ONLY contain lines in this exact textual shape
+  (no JSON, no extra commentary, no additional text):
+
+    Degree: <inferred degree summary>
+    YOE: <inferred years-of-experience summary>
+    Skills from the description: <comma-separated condensed skills>
+
+- Repeat this 3-line block for each updated row, separated by a single blank line.
 """.strip()
 
 description_agent = Agent(
@@ -507,6 +515,7 @@ description_agent = Agent(
     description=backfill_agent_instruction,
     tools=[backfill_job_descriptions, extract_structured_fields],
     generate_content_config=types.GenerateContentConfig(temperature=0),
+    output_key = "matching_data"
 )
 
 __all__ = ["description_agent", "backfill_job_descriptions", "extract_structured_fields"]

@@ -87,6 +87,7 @@ You are the top-level coordinator.
 - Official job listings (ATS) → ats_jobs_agent (Greenhouse/Lever public APIs; **no scraping**)
 - Professional contact search / outreach / people finder → apollo_agent (Apollo.io official API; **no scraping**)
 - Recruiter discovery & outreach enrichment for companies in the jobs sheet → apollo_outreach_agent (uses Apollo People Search + /people/match to find recruiter contacts and write Outreach Name & Outreach email into the jobs_search_database sheet)
+- If query asks for matching jobs, then go to the match_agent
 
 ### Gmail intent examples (route to google_gmail_agent)
 - “search my inbox for …”, “find unread from …”, “show thread about …”
@@ -128,6 +129,11 @@ Examples:
 - “Backfill missing job descriptions in my database”
 - “Show me recent roles at OpenAI or Anthropic”
 
+### Match agent:
+- go to job_search_database and for 
+
+
+
 The job system includes:
 1. **ats_jobs_agent (Greenhouse Fetch)** — Queries official Greenhouse APIs to fetch real job postings with title, company, location, date, and URL.  
 2. **job_search_sheets_agent (BigQuery/Sheets Storage)** — Appends structured job data to the 'Job_search_Database' Google Sheet.  
@@ -163,6 +169,7 @@ from google_drive_service.agent_google_drive import google_drive_agent
 from google_search_service.agent_google_search import google_search_agent
 from jobs_service.jobs_agent import root_agent as jobs_root_agent  
 from apollo_service.apollo_agent import apollo_outreach_agent as apollo_agent
+from matching_service.matching import match_agent as match_agent
 # from TESTING_apollo_service.apollo_agent import apollo_agent  # if present
 
 # Hook up search agent as AgentTool 
@@ -178,7 +185,7 @@ orchestrator_agent = Agent(
     name="orchestrator",
     description=ORCH_INSTRUCTIONS,
     generate_content_config=types.GenerateContentConfig(temperature=0.2),
-    sub_agents=[calendar_agent, google_docs_agent, gmail_agent, google_sheets_agent, google_drive_agent, jobs_root_agent, apollo_agent],
+    sub_agents=[calendar_agent, google_docs_agent, gmail_agent, google_sheets_agent, google_drive_agent, jobs_root_agent, apollo_agent, match_agent],
     tools=[_search_tool],  # lets the LLM explicitly hand off; no search tool here
 )
 

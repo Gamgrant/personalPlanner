@@ -22,7 +22,6 @@ import os
 from jobs_service.sub_agent.database_agent import database_agent
 from jobs_service.sub_agent.greenhouse_fetch_agent import greenhouse_fetch_agent
 from jobs_service.sub_agent.enrichment_agent import description_agent
-from jobs_service.sub_agent.matching import match_agent
 MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
 
 # -------------------------------
@@ -42,7 +41,6 @@ JOB_SEARCH_DESCRIPTION = (
     "3. Data enrichment (filter_ui_agent)\n"
     "   - access the website in the website url column of the job_search_database"
     "   - enrich the column description in job_search_database to have job description\n.\n\n"
-    "4. Use LLM reasoning and matchign to score a CV between 0 and 10"
     "Across all steps, LLM reasoning is used to interpret ambiguous instructions, map them to the right tools, "
     "and maintain a consistent, data-backed job discovery experience."
 
@@ -58,7 +56,6 @@ job_search_pipeline = SequentialAgent(
         greenhouse_fetch_agent,
         database_agent,
         description_agent,
-        match_agent
     ],
 )
 
