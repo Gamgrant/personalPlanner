@@ -1,17 +1,30 @@
 # verify.py — one-time OAuth to create/refresh token.json (no API calls)
 import os
+from pathlib import Path
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-# Load .env for file paths
+# Base directory: project root (one level up from .creds)
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load .env from either .creds/.env or project root .env
 try:
-    from dotenv import load_dotenv, find_dotenv
-    load_dotenv(find_dotenv(".env", usecwd=True))
+    from dotenv import load_dotenv
+    for candidate in [BASE_DIR / ".creds" / ".env", BASE_DIR / ".env"]:
+        if candidate.exists():
+            load_dotenv(candidate)
+            break
 except Exception:
     pass
 
-# Paths from .env (with sane defaults)
-CREDENTIALS_FILE = os.environ.get("GOOGLE_OAUTH_CLIENT_FILE")
-TOKEN_FILE       = os.environ.get("GOOGLE_OAUTH_TOKEN_FILE")
+# Paths from .env, with sane defaults into .creds/
+CREDENTIALS_FILE = os.environ.get(
+    "GOOGLE_OAUTH_CLIENT_FILE",
+    str((Path(__file__).resolve().parent / "credentials.json"))
+)
+TOKEN_FILE = os.environ.get(
+    "GOOGLE_OAUTH_TOKEN_FILE",
+    str((Path(__file__).resolve().parent / "token.json"))
+)
 
 # Scopes for personal Calendar + Gmail (adjust as needed)
 SCOPES = [
