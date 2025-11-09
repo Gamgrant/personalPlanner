@@ -185,6 +185,6 @@ root_agent = orchestrator_agent
 
 __all__ = ["root_agent"]
 
-from google.adk.apps.app import App
+# from google.adk.apps.app import App
 
-app = App(root_agent=root_agent, name="app")
+# app = App(root_agent=root_agent, name="app")

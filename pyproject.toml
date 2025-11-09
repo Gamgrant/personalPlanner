@@ -157,6 +157,7 @@ dependencies = [
     "dotenv>=0.9.9",
     "anthropic>=0.72.0",
     "docker>=7.1.0",
+    "pypdf>=6.1.3",
 ]
 
 

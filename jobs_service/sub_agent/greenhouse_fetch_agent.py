@@ -40,6 +40,7 @@ from google.adk.agents import Agent
 from google.genai import types
 from tzlocal import get_localzone
 from zoneinfo import ZoneInfo
+import json
 
 from utils.time_utils import get_time_context
 
@@ -402,24 +403,135 @@ def list_jobs_in_last_months(
 # Optional: pretty-printer for UI
 # -------------------------------
 
+def _coerce_to_jobs_list(jobs: Union[str, Dict[str, Any], List[Any]]) -> List[Dict[str, Any]]:
+    """
+    Normalize many possible inputs to List[Dict].
+    - If JSON string, parse it.
+    - If dict envelope, unwrap common keys like 'jobs' or 'results'.
+    - If list contains strings/JSON strings, try to parse; otherwise wrap with {'title': <str>}.
+    """
+    # JSON string or preformatted text
+    if isinstance(jobs, str):
+        try:
+            jobs = json.loads(jobs)
+        except Exception:
+            # Treat as a single preformatted line
+            return [{"title": jobs}]
+
+    # Single dict (possibly an envelope)
+    if isinstance(jobs, dict):
+        if isinstance(jobs.get("jobs"), list):
+            jobs = jobs["jobs"]
+        elif isinstance(jobs.get("results"), list):
+            jobs = jobs["results"]
+        else:
+            jobs = [jobs]
+
+    # Ensure list
+    if not isinstance(jobs, list):
+        return [{"title": str(jobs)}]
+
+    normalized: List[Dict[str, Any]] = []
+    for item in jobs:
+        if isinstance(item, dict):
+            normalized.append(item)
+            continue
+        if isinstance(item, str):
+            # Try JSON per item
+            try:
+                obj = json.loads(item)
+                if isinstance(obj, dict):
+                    normalized.append(obj)
+                    continue
+            except Exception:
+                pass
+            normalized.append({"title": item})
+            continue
+        # Fallback
+        normalized.append({"title": str(item)})
+
+    return normalized
+
+
+from typing import Any, Dict, List, Optional
+import json
+
 def format_jobs_for_display(jobs: List[Dict[str, Any]], header: Optional[str] = None) -> str:
     """
     Convert a structured jobs list to a human-readable string.
-    Safe to use as a separate tool; DOES NOT affect structured pipeline.
+
+    IMPORTANT: The type hint stays strict (List[Dict[str, Any]]) so ADK
+    does not emit an `anyOf` in the tool schema. We still coerce at runtime
+    for safety if something passes a string/dict by mistake.
     """
+    # ---- Runtime coercion (keeps schema simple) ----
+    if not isinstance(jobs, list):
+        # try JSON string
+        if isinstance(jobs, str):
+            try:
+                parsed = json.loads(jobs)
+            except Exception:
+                parsed = [{"title": jobs}]
+        else:
+            parsed = jobs
+
+        if isinstance(parsed, dict):
+            if isinstance(parsed.get("jobs"), list):
+                jobs = parsed["jobs"]
+            elif isinstance(parsed.get("results"), list):
+                jobs = parsed["results"]
+            else:
+                jobs = [parsed]
+        elif isinstance(parsed, list):
+            jobs = parsed
+        else:
+            jobs = [{"title": str(parsed)}]
+
+    # Ensure list of dicts
+    norm: List[Dict[str, Any]] = []
+    for item in jobs:
+        if isinstance(item, dict):
+            norm.append(item)
+        else:
+            # best-effort wrap
+            norm.append({"title": str(item)})
+    jobs = norm
+
     if not jobs:
         return "No jobs found."
 
-    lines = []
+    lines: List[str] = []
     if header:
         lines.append(header.strip() + "\n")
+
     for idx, j in enumerate(jobs, 1):
-        lines.append(
-            f"{idx}. {j.get('title','')} — {j.get('company','')} — {j.get('location','')}\n"
-            f"   Date: {j.get('date_posted','')}\n"
-            f"   Link: {j.get('url','')}\n"
-        )
-    return "\n".join(lines)
+        title = j.get("title") or j.get("name") or j.get("job_title") or j.get("position") or ""
+
+        company = ""
+        c = j.get("company")
+        if isinstance(c, dict):
+            company = c.get("name") or c.get("company_name") or ""
+        elif isinstance(c, str):
+            company = c
+        company = company or j.get("company_name") or j.get("organization") or ""
+
+        loc = j.get("location") or j.get("location_name") or ""
+        if isinstance(loc, dict):
+            loc = loc.get("name") or loc.get("city") or loc.get("region") or ""
+        elif isinstance(loc, list):
+            loc = ", ".join([x.get("name", "") if isinstance(x, dict) else str(x) for x in loc])
+
+        date_posted = j.get("date_posted", "") or j.get("updated_at", "") or j.get("created_at", "")
+        url = j.get("url", "") or j.get("absolute_url", "")
+
+        main = " — ".join([x for x in [title, company, loc] if x])
+        lines.append(f"{idx}. {main}".rstrip())
+        if date_posted:
+            lines.append(f"   Date: {date_posted}")
+        if url:
+            lines.append(f"   Link: {url}")
+
+    return "\n".join(lines) if lines else "No jobs found."
 
 # -------------------------------
 # Agent
