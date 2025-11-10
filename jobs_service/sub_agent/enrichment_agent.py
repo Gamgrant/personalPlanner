@@ -113,40 +113,200 @@ _DEGREE_LEVELS = [
 ]
 
 _SKILL_ALIASES: Dict[str, str] = {
+    # --- Core programming languages ---
     "Python": r"\bpython\b",
     "R": r"(?<!\w)r(?!\w)",
     "SQL": r"\bsql\b",
-    "Excel": r"\bexcel\b",
-    "PowerPoint": r"\bpower\s*point|powerpoint\b",
-    "Tableau": r"\btableau\b",
-    "Looker": r"\blooker\b",
-    "Power BI": r"\bpower\s*bi\b",
-    "Git": r"\bgit\b",
-    "Linux": r"\blinux\b",
+    "NoSQL": r"\bnosql\b",
+    "Java": r"\bjava(?!script)\b",
+    "JavaScript": r"\bjavascript|node\.?js|nodejs\b",
+    "TypeScript": r"\btypescript\b",
+    "Go": r"\bgolang|\bgo\b",
+    "C++": r"\bc\+\+\b",
+    "C#": r"\bc#\b",
+    "Scala": r"\bscala\b",
+    "Ruby": r"\bruby\b",
+    "PHP": r"\bphp\b",
+    "Rust": r"\brust\b",
+    "Kotlin": r"\bkotlin\b",
+    "Swift": r"\bswift\b",
+
+    # --- DS / ML / AI concepts ---
+    "Machine Learning": r"\bmachine\s+learning\b",
+    "Deep Learning": r"\bdeep\s+learning\b",
+    "Statistics": r"\bstatistics|statistical\b",
+    "Statistical Analysis": r"\bstatistical\s+analysis\b",
+    "Probability": r"\bprobability\b",
+    "Hypothesis Testing": r"\bhypothesis\s+testing\b",
+    "A/B Testing": r"\ba\/b\s*testing|ab\s*testing\b",
+    "Experiment Design": r"\bexperimental?\s+design\b",
+    "Regression": r"\bregression\b",
+    "Time Series": r"\btime[-\s]*series\b",
+    "Bayesian": r"\bbayesian\b",
+    "NLP": r"\bnatural\s+language\s+processing|nlp\b",
+    "Computer Vision": r"\bcomputer\s+vision\b",
+    "Reinforcement Learning": r"\breinforcement\s+learning\b",
+    "Recommendation Systems": r"\brecommendation\s+systems?\b",
+    "Anomaly Detection": r"\banomaly\s+detection\b",
+
+    # --- DS / ML libraries & tooling ---
     "Pandas": r"\bpandas\b",
     "NumPy": r"\bnumpy\b",
+    "SciPy": r"\bscipy\b",
     "Scikit-learn": r"\bscikit[-\s]?learn|sklearn\b",
+    "XGBoost": r"\bxgboost\b",
+    "LightGBM": r"\blightgbm\b",
+    "CatBoost": r"\bcatboost\b",
     "TensorFlow": r"\btensorflow\b",
+    "Keras": r"\bkeras\b",
     "PyTorch": r"\bpytorch\b",
+    "JAX": r"\bjax\b",
+    "spaCy": r"\bspacy\b",
+    "NLTK": r"\bnltk\b",
+    "Transformers": r"\btransformers\b",
+    "OpenCV": r"\bopencv\b",
+
+    # --- GenAI / LLM / vector DBs ---
+    "LangChain": r"\blangchain\b",
+    "LlamaIndex": r"\bllama\s*index|llamaindex\b",
+    "Hugging Face": r"\bhugging\s*face\b",
+    "OpenAI API": r"\bopenai\s+api\b",
+    "Azure OpenAI": r"\bazure\s+openai\b",
+    "Vertex AI": r"\bvertex\s+ai\b",
+    "Pinecone": r"\bpinecone\b",
+    "Weaviate": r"\bweaviate\b",
+    "Milvus": r"\bmilvus\b",
+    "Chroma": r"\bchroma(?:db)?\b",
+    "FAISS": r"\bfaiss\b",
+
+    # --- Data viz / BI ---
+    "Matplotlib": r"\bmatplotlib\b",
+    "Seaborn": r"\bseaborn\b",
+    "Plotly": r"\bplotly\b",
+    "Bokeh": r"\bbokeh\b",
+    "D3.js": r"\bd3\.js|d3js\b",
+    "Tableau": r"\btableau\b",
+    "Power BI": r"\bpower\s*bi\b",
+    "Looker": r"\blooker\b",
+    "LookML": r"\blookml\b",
+    "Excel": r"\bexcel\b",
+
+    # --- Databases / warehouses / search ---
+    "PostgreSQL": r"\bpostgres(?:ql)?\b",
+    "MySQL": r"\bmysql\b",
+    "SQLite": r"\bsqlite\b",
+    "MongoDB": r"\bmongodb\b",
+    "Cassandra": r"\bcassandra\b",
+    "Redis": r"\bredis\b",
+    "Elasticsearch": r"\belasticsearch\b",
+    "Solr": r"\bsolr\b",
+    "Snowflake": r"\bsnowflake\b",
+    "Redshift": r"\bredshift\b",
+    "BigQuery": r"\bbigquery\b",
+    "DynamoDB": r"\bdynamodb\b",
+    "ClickHouse": r"\bclickhouse\b",
+
+    # --- Data engineering / pipelines ---
+    "Airflow": r"\bairflow\b",
+    "dbt": r"\bdbt\b",
+    "Fivetran": r"\bfivetran\b",
+    "Stitch": r"\bstitch\b",
+    "ETL": r"\betl\b",
+    "Kafka": r"\bkafka\b",
+    "Kinesis": r"\bkinesis\b",
     "Spark": r"\bspark\b",
     "Hadoop": r"\bhadoop\b",
-    "Airflow": r"\bairflow\b",
+
+    # --- Cloud / infra / MLOps ---
     "AWS": r"\baws\b",
     "GCP": r"\bgcp|google\s+cloud\b",
     "Azure": r"\bazure\b",
     "Docker": r"\bdocker\b",
     "Kubernetes": r"\bkubernetes|k8s\b",
-    "Snowflake": r"\bsnowflake\b",
-    "Java": r"\bjava(?!script)\b",
-    "JavaScript": r"\bjavascript|node\.?js|nodejs\b",
-    "TypeScript": r"\btypescript\b",
+    "Helm": r"\bhelm\b",
+    "Terraform": r"\bterraform\b",
+    "Ansible": r"\bansible\b",
+    "Jenkins": r"\bjenkins\b",
+    "CircleCI": r"\bcircleci\b",
+    "Travis CI": r"\btravis\s*ci\b",
+    "GitHub Actions": r"\bgithub\s+actions\b",
+    "Argo CD": r"\bargo\s*cd\b",
+    "SageMaker": r"\bsagemaker\b",
+    "MLflow": r"\bmlflow\b",
+    "Kubeflow": r"\bkubeflow\b",
+    "Ray": r"\bray\b",
+    "DVC": r"\bdvc\b",
+
+    # --- Web / app frameworks (SWE) ---
     "React": r"\breact\b",
-    "Go": r"\bgolang|\bgo\b",
-    "C++": r"\bc\+\+\b",
-    "C#": r"\bc#\b",
-    "Communication": r"\bcommunication|communicator\b",
-    "Leadership": r"\blead(?:er|ership)\b",
+    "React Native": r"\breact\s+native\b",
+    "Next.js": r"\bnext\.js|nextjs\b",
+    "Vue": r"\bvue\.?js\b",
+    "Nuxt": r"\bnuxt\.?js\b",
+    "Angular": r"\bangular\b",
+    "Svelte": r"\bsvelte\b",
+    "Django": r"\bdjango\b",
+    "Flask": r"\bflask\b",
+    "FastAPI": r"\bfastapi\b",
+    "Rails": r"\brails|ruby\s+on\s+rails\b",
+    "Spring": r"\bspring\b",
+    "Spring Boot": r"\bspring\s+boot\b",
+    ".NET": r"\b\.net\b",
+    "ASP.NET": r"\basp\.net\b",
+    "Express.js": r"\bexpress\.js|expressjs\b",
+    "NestJS": r"\bnestjs\b",
+    "Laravel": r"\blaravel\b",
+
+    # --- APIs / protocols ---
+    "REST": r"\brestful?\b",
+    "GraphQL": r"\bgraphql\b",
+    "gRPC": r"\bgrpc\b",
+    "WebSockets": r"\bweb\s*sockets?\b",
+    "OpenAPI": r"\bopenapi\b",
+    "Swagger": r"\bswagger\b",
+
+    # --- Testing / QA ---
+    "Jest": r"\bjest\b",
+    "Mocha": r"\bmocha\b",
+    "Chai": r"\bchai\b",
+    "Cypress": r"\bcypress\b",
+    "Playwright": r"\bplaywright\b",
+    "JUnit": r"\bjunit\b",
+    "pytest": r"\bpytest\b",
+    "unittest": r"\bunittest\b",
+    "Selenium": r"\bselenium\b",
+
+    # --- Build / tooling ---
+    "Webpack": r"\bwebpack\b",
+    "Babel": r"\bbabel\b",
+    "Rollup": r"\brollup\b",
+    "Vite": r"\bvite\b",
+    "Gradle": r"\bgradle\b",
+    "Maven": r"\bmaven\b",
+    "npm": r"\bnpm\b",
+    "Yarn": r"\byarn\b",
+    "pnpm": r"\bpnpm\b",
+
+    # --- Monitoring / logging / ops ---
+    "Prometheus": r"\bprometheus\b",
+    "Grafana": r"\bgrafana\b",
+    "Datadog": r"\bdatadog\b",
+    "New Relic": r"\bnew\s+relic\b",
+    "Splunk": r"\bsplunk\b",
+    "Sentry": r"\bsentry\b",
+
+    # --- Version control & collaboration ---
+    "Git": r"\bgit\b",
+    "GitHub": r"\bgithub\b",
+    "GitLab": r"\bgitlab\b",
+    "Bitbucket": r"\bbitbucket\b",
+    "JIRA": r"\bjira\b",
+    "Confluence": r"\bconfluence\b",
+
+    # --- Soft skills (kept, but deprioritized) ---
     "Project Management": r"\bproject\s+management\b",
+    "Leadership": r"\blead(?:er|ership)\b",
+    "Communication": r"\bcommunication|communicator\b",
 }
 
 _YOE_PATTERNS = [
@@ -200,16 +360,116 @@ def _extract_degree(text: str) -> str:
     return highest.title()
 
 def _extract_skills(text: str, max_count: int = 30) -> str:
-    hits = [name for name, pat in _SKILL_ALIASES.items() if re.search(pat, text, re.IGNORECASE)]
-    priority = [
-        "Python","SQL","Pandas","NumPy","Scikit-learn","TensorFlow","PyTorch",
-        "AWS","GCP","Azure","Docker","Kubernetes","Spark","Hadoop","Snowflake",
-        "Tableau","Looker","Power BI","Excel","Git","Linux","Airflow",
-        "Java","JavaScript","TypeScript","React","Go","C++","C#",
-        "Project Management","Leadership","Communication","PowerPoint","R",
+    """
+    Extract a condensed list of primarily technical skills from the description.
+
+    - Prefer concrete technical tools / languages / frameworks.
+    - Soft skills (Communication, Leadership, Project Management) are appended last.
+    - Aim for ~20–30 tokens when available (controlled by max_count).
+    """
+    if not text:
+        return ""
+
+    # 1) Find all alias hits in the description
+    hits = {name for name, pat in _SKILL_ALIASES.items() if re.search(pat, text, re.IGNORECASE)}
+    if not hits:
+        return ""
+
+    # Separate soft skills from technical
+    soft_skills = {"Communication", "Leadership", "Project Management"}
+    tech_hits = hits - soft_skills
+    soft_hits = hits & soft_skills
+
+    # Priority ordering for common technical skills (AI, DS, DE, SWE)
+    tech_priority = [
+        # Core DS / ML / AI
+        "Machine Learning", "Deep Learning",
+        "Statistics", "Statistical Analysis", "Probability",
+        "Hypothesis Testing", "A/B Testing", "Experiment Design",
+        "Regression", "Time Series", "Bayesian",
+        "NLP", "Computer Vision", "Reinforcement Learning",
+        "Recommendation Systems", "Anomaly Detection",
+
+        # DS / ML libs
+        "Python", "R", "SQL",
+        "Pandas", "NumPy", "SciPy",
+        "Scikit-learn", "XGBoost", "LightGBM", "CatBoost",
+        "TensorFlow", "Keras", "PyTorch", "JAX",
+        "spaCy", "NLTK", "Transformers", "OpenCV",
+
+        # GenAI / LLM
+        "LangChain", "LlamaIndex", "Hugging Face",
+        "OpenAI API", "Azure OpenAI", "Vertex AI",
+        "Pinecone", "Weaviate", "Milvus", "Chroma", "FAISS",
+
+        # Data viz / BI
+        "Matplotlib", "Seaborn", "Plotly", "Bokeh", "D3.js",
+        "Tableau", "Power BI", "Looker", "LookML", "Excel",
+
+        # Data stores / warehouses / search
+        "PostgreSQL", "MySQL", "SQLite",
+        "MongoDB", "Cassandra", "Redis", "Elasticsearch", "Solr",
+        "Snowflake", "Redshift", "BigQuery", "DynamoDB", "ClickHouse", "NoSQL",
+
+        # Data eng / pipelines
+        "Airflow", "dbt", "Fivetran", "Stitch", "ETL",
+        "Kafka", "Kinesis", "Spark", "Hadoop",
+
+        # Cloud / infra / MLOps
+        "AWS", "GCP", "Azure",
+        "Docker", "Kubernetes", "Helm", "Terraform", "Ansible",
+        "Jenkins", "CircleCI", "Travis CI", "GitHub Actions", "Argo CD",
+        "SageMaker", "MLflow", "Kubeflow", "Ray", "DVC",
+
+        # SWE languages
+        "Java", "JavaScript", "TypeScript", "Go", "C++", "C#", "Scala",
+        "Ruby", "PHP", "Rust", "Kotlin", "Swift",
+
+        # Web / app frameworks
+        "React", "React Native", "Next.js", "Vue", "Nuxt", "Angular", "Svelte",
+        "Django", "Flask", "FastAPI", "Rails", "Spring", "Spring Boot",
+        ".NET", "ASP.NET", "Express.js", "NestJS", "Laravel",
+
+        # APIs / protocols
+        "REST", "GraphQL", "gRPC", "WebSockets", "OpenAPI", "Swagger",
+
+        # Testing / QA
+        "Jest", "Mocha", "Chai", "Cypress", "Playwright",
+        "JUnit", "pytest", "unittest", "Selenium",
+
+        # Build / tooling
+        "Webpack", "Babel", "Rollup", "Vite",
+        "Gradle", "Maven", "npm", "Yarn", "pnpm",
+
+        # Monitoring / logging / ops
+        "Prometheus", "Grafana", "Datadog", "New Relic",
+        "Splunk", "Sentry",
+
+        # Version control & collab
+        "Git", "GitHub", "GitLab", "Bitbucket", "JIRA", "Confluence",
     ]
-    ordered = [s for s in priority if s in hits][:max_count]
-    return ", ".join(ordered)
+
+    ordered: List[str] = []
+
+    # 2) Add technical skills in priority order
+    for s in tech_priority:
+        if s in tech_hits:
+            ordered.append(s)
+
+    # 3) Add any remaining technical skills (not in the priority list) in alpha order
+    remaining_tech = sorted(tech_hits - set(ordered))
+    ordered.extend(remaining_tech)
+
+    # 4) Finally add soft skills at the end, if present
+    for s in ["Project Management", "Leadership", "Communication"]:
+        if s in soft_hits:
+            ordered.append(s)
+
+    if not ordered:
+        return ""
+
+    # Cap to max_count
+    return ", ".join(ordered[:max_count])
 
 def _extract_all_fields(text: str) -> Dict[str, str]:
     """

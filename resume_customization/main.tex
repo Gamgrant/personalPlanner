@@ -6,7 +6,7 @@
   pdfstandard = ua-1
 }
 
-\documentclass[10pt,letterpaper]{article}
+\documentclass[9.5pt,letterpaper]{article}
 
 % ---- Engine guard: require LuaLaTeX ----
 \usepackage{iftex}
@@ -16,16 +16,8 @@
 \usepackage{environ} % to capture environment bodies
 
 % Measure-and-place helper: keep a block together dynamically
-\newcommand{\KeepTogetherBox}[1]{%
-  \par
-  \begingroup
-    \setbox0=\vbox{#1}%
-    \dimen0=\dimexpr\ht0+\dp0\relax
-    \dimen2=\dimexpr\pagegoal-\pagetotal\relax
-    \ifdim \dimen2<\dimen0 \newpage \fi
-    \noindent\box0\par
-  \endgroup
-}
+\newcommand{\KeepTogetherBox}[1]{#1}
+
 
 % ---- Layout & fonts ----
 \usepackage[margin=0.2in]{geometry}
@@ -61,8 +53,12 @@
 % ---- Colors (for hidden stats) ----
 \usepackage{xcolor}
 
-\newcommand{\BlockStart}[1]{\mbox{\color{white}\tiny[BEGIN #1]}}
-\newcommand{\BlockEnd}[1]{\mbox{\color{white}\tiny[END #1]}}
+\newcommand{\BlockStart}[1]{%
+  {\color{white}\tiny\makebox[0pt][l]{[BEGIN #1]}}%
+}
+\newcommand{\BlockEnd}[1]{%
+  {\color{white}\tiny\makebox[0pt][l]{[END #1]}}%
+}
 
 % ---- Contact info ----
 \newcommand{\FullName}{Grant Ovsepyan}
@@ -76,6 +72,8 @@
 \newcounter{experiencecount}
 \newcounter{projectcount}
 \newcounter{skillcount}
+\newcommand{\AfterExperienceSep}{-4pt} % tighten experience entries
+\newcommand{\AfterProjectSep}{-4pt} 
 
 % ---- Tight bullets (no tagging) ----
 % ---- Tight bullets (extra snug) ----
@@ -102,9 +100,10 @@
     \entry{#1}{#2}{#3}{#4}{#5}%
     \BlockEnd{\thisid}%
   }%
+  \vspace{\AfterExperienceSep}%
 }
-
 % Project: dynamic, unbreakable block
+
 \newcommand{\projectauto}[3]{%
   \edef\thisid{pr:\number\numexpr\value{projectcount}+1\relax}%
   \KeepTogetherBox{%
@@ -112,6 +111,7 @@
     \project{#1}{#2}{#3}%
     \BlockEnd{\thisid}%
   }%
+  \vspace{\AfterProjectSep}%
 }
 
 % Skills: dynamic, unbreakable entire section
@@ -142,19 +142,21 @@
   \textbf{#1}\hfill\textit{#3}\\
   \emph{#2}\hfill #4\\[-1pt]
   #5
-  \vspace{5pt}
+  \vspace{0pt}
 }
 
 % ---- Project entry ----
 % #1 Title  #2 Tech  #3 Bullets (tightbullets)
+% \vspace{-8pt} 
 \newcommand{\project}[3]{%
   \stepcounter{projectcount}%
   \textbf{#1} \,|\, \textit{#2}\\[-1pt]
   #3
-  \vspace{5pt}
+  \vspace{0pt}
 }
 
 % ---- Skills row ----
+% \vspace{-4pt} 
 \newcommand{\skillrow}[2]{%
   \stepcounter{skillcount}%
   \textbf{#1:} #2\\
@@ -172,10 +174,7 @@
 % ===== Education =====
 \BeginSection{Education}
 \textbf{Carnegie Mellon University} \hfill Pittsburgh, PA\\
-M.S. in Artificial Intelligence Engineering \;|\; GPA: 3.81/4.00 \hfill Dec 2024\\
-Relevant: NLP, Modern LLMs, Retrieval \& RAG, Distributed Systems, Data Engineering
-
-\medskip
+M.S. in Artificial Intelligence Engineering \;|\; GPA: 3.81/4.00 \hfill Dec 2024\\[-1pt]
 \textbf{University of Wisconsin–Madison} \hfill Madison, WI\\
 B.S. in Computer Science and B.S. in Chemical Engineering \;|\; GPA: 3.6/4.0 \hfill Aug 2023
 
@@ -189,9 +188,9 @@ B.S. in Computer Science and B.S. in Chemical Engineering \;|\; GPA: 3.6/4.0 \hf
 {Feb 2025 -- Aug 2025}
 {%
   \begin{tightbullets}
-    \item Built OCR/NLP/CV pipelines + evals that lifted conversion 7× (2\% $\rightarrow$ 14\%) and cut spend 35\%; shipped dashboards and forecasting with tracked drift/latency.
-    \item Built prompt-engineered agents for script/voiceover generation and a Streamlit + SQL performance dashboard; reduced wasted spend 35\% by flagging underperformers.
-    \item Developed forecasting (Prophet, regression baselines) for CTR/revenue, cutting error 22\% (MAPE).
+    \item Processed 250+ ads/day with SQL/Python NLP pipelines (topic modeling, K-Means), surfacing emotional hooks and CTAs for ad generation.
+    \item Cut wasted spend 35\% by deploying Streamlit dashboards with automated model evaluation and suppression.
+    \item Reduced forecasting error 22\% (MAPE) using Prophet and regression baselines with Dockerized training and CI/CD retraining triggers.
   \end{tightbullets}
 }
 
@@ -202,8 +201,9 @@ B.S. in Computer Science and B.S. in Chemical Engineering \;|\; GPA: 3.6/4.0 \hf
 {May 2024 -- Aug 2024}
 {%
   \begin{tightbullets}
-    \item Automated C++/Python CI/QA (CMake/Jenkins) across 3 OSs, reducing build time 15\% and accelerating MRI workflow iteration.
-    \item Implemented early statistical quality checks to flag k-space smear 5 min earlier, improving reliability of Orchestra SDK releases.
+    \item Automated C++/Python QA pipelines (Jenkins, CMake) across 3 OSs, cutting MRI reconstruction time 15\% (from 45 to 38 min).
+    \item Added k-space smear detection in C++ to Orchestra SDK to flag faulty outputs early.
+    \item Set up CI triggers and regression harnesses to streamline release testing.
   \end{tightbullets}
 }
 
@@ -214,8 +214,9 @@ B.S. in Computer Science and B.S. in Chemical Engineering \;|\; GPA: 3.6/4.0 \hf
 {Jan 2023 -- Jul 2023}
 {%
   \begin{tightbullets}
-    \item Fine-tuned CLRNet on proprietary data, boosting lane-detection F1 by 15\% over the baseline.
-    \item Engineered ROS2/WebSocket LiDAR streaming pipeline handling 1.4M pts/sec with $\sim$50 ms latency for real-time point-cloud evaluation.
+    \item Streamed 1.4M LiDAR pts/sec with ROS2/WebSocket at 50 ms latency for live reconstruction.
+    \item Fine-tuned CLRNet on proprietary roadway data, increasing lane-detection F1@0.5 by 15\%.
+    \item Profiled pipelines and integrated C++/Python modules for sensor fusion and visualization.
   \end{tightbullets}
 }
 
@@ -226,22 +227,9 @@ B.S. in Computer Science and B.S. in Chemical Engineering \;|\; GPA: 3.6/4.0 \hf
 {May 2022 -- Aug 2022}
 {%
   \begin{tightbullets}
-    \item Built XGBoost/Decision-Tree anomaly classifiers and calibrated thresholds to hold recall constant; precision +12\%, false positives down; published to interactive dashboards.
-    \item Forecasted equipment condition with ARIMA/VAR/Prophet using rolling time-series CV; enabled proactive maintenance and cut unplanned downtime 8\%.
-    \item Built PySpark ETL ingesting 40M+ rows/day to AWS S3, with cleaning, imputation, and feature prep for ML.
-  \end{tightbullets}
-}
-
-\entryauto
-{Additive Manufacturing (Boydston Lab)}
-{Research Assistant}
-{Madison, WI}
-{Jan 2019 -- Mar 2023}
-{%
-  \begin{tightbullets}
-    \item Ran 1TB+ COMSOL heat-transfer simulations; reframed outputs in polar coordinates for distributional error analysis.
-    \item Trained XGBoost surrogate regressors with k-fold CV (optimized for MAE/RMSE), cutting runtime 70\% and achieving $\sim$100× lower dimensional error in topology optimization.
-    \item Co-authored \href{https://www.nature.com/articles/s41467-024-48159-7}{Nature Communications paper}.
+    \item Ingested 40M+ rows/day with PySpark to AWS S3 and Spark MLlib pipelines for anomaly detection.
+    \item Trained scikit-learn, XGBoost, and PyTorch models to raise fault precision 12\% and cut false alarms.
+    \item Used ARIMA, VAR, and Prophet forecasting to reduce equipment downtime 8\%.
   \end{tightbullets}
 }
 
@@ -249,45 +237,48 @@ B.S. in Computer Science and B.S. in Chemical Engineering \;|\; GPA: 3.6/4.0 \hf
 \BeginSection{Projects}
 
 \projectauto
-{RAG QA System}
-{LLaMA-3, Mistral, DeepSeek, LangChain, Pinecone}
+{Mini-LLAMA (42M-params)}
+{PyTorch, Transformers}
 {%
   \begin{tightbullets}
-    \item Built RAG QA over a CMU/Pittsburgh corpus with LangChain (Pinecone + Chroma); retrieval \& answer evals lifted LLaMA-3 F1 from 0.28 $\rightarrow$ 0.45.
-    \item Built dynamic scrapers (Selenium, BeautifulSoup) that expand hidden sections, traverse lazy-loaded lists/paged views, and OCR PDFs.
-    \item Designed hierarchical metadata for filtering and built an evaluation harness with 150 labeled questions.
+    \item Implemented tokenizer, rotary embeddings, attention, and optimizer from scratch.
+    \item Pretrained on TinyStories and fine-tuned to 85\% accuracy on SST-5 and CFIMDB datasets.
+    \item Used mixed precision and distributed training to improve efficiency.
   \end{tightbullets}
 }
+
+\projectauto
+{RAG QA System}
+{LLaMA-3, Mistral, LangChain, Pinecone}
+{%
+  \begin{tightbullets}
+    \item Built retrieval-augmented QA system with structured metadata filtering for CMU/Pittsburgh corpus.
+    \item Evaluated on 150 labeled questions; improved F1 from 0.28 to 0.45 and recall from 0.45 to 0.55.
+    \item Leveraged ChromaDB for embedding generation and metadata-driven vector retrieval at scale.
+  \end{tightbullets}
+}
+
 
 \projectauto
 {FIFA Performance Prediction}
 {PySpark, SparkML, PyTorch, GCP (BigQuery, Dataflow), PostgreSQL}
 {%
   \begin{tightbullets}
-    \item GCP data pipeline across 8 datasets, 100+ features, millions of rows with schema validation and optimized queries.
-    \item Trained Random Forest, SVM, PyTorch NN on a 32 GB Dataproc cluster; RMSE 1.51 $\rightarrow$ 1.10 ($-27\%$).
-    \item Automated hyperparameter tuning via Spark MLlib, improving runtime efficiency by 40\%.
+    \item Built GCP-based data processing pipeline (BigQuery, Dataflow, PostgreSQL) to process 8 datasets, 100+ features, millions of rows with
+strict schema validation and optimized queries.
+    \item Trained Random Forest, SVM, PyTorch NN on a 32 GB Dataproc cluster, cutting RMSE from 1.51 down to 1.10 (-27\%).
+    \item Automated hyperparameter tuning and caching for reproducible large-scale runs.
   \end{tightbullets}
 }
 
 \projectauto
-{Audio-Guided Album Cover Generation}
-{CLIP, Stable Diffusion 1.4, PyTorch}
+{Stock Price Prediction Platform}
+{PyTorch, Flask, LSTM, GNN, DigitalOcean}
 {%
   \begin{tightbullets}
-    \item Built ETL scraper (1980–2024) across YouTube/Wikipedia + Spotify API (requests/BS4/pandas + multithreading) with schema checks and retry/backoff.
-    \item Shipped dashboards (Streamlit) to audit ingestion \& outputs—coverage by year/genre, API error rates/latency, and side-by-side comparisons for QA.
-    \item Fused multimodal signals—CLIP text + audio embeddings via cross-attention/ControlNet—and packaged train/inference pipelines for reproducible runs.
-  \end{tightbullets}
-}
-
-\projectauto
-{Mini-LLAMA (42M params)}
-{PyTorch, Transformers}
-{%
-  \begin{tightbullets}
-    \item Implemented Transformer blocks: RoPE, attention, optimizer in PyTorch; pretrained on TinyStories.
-    \item Fine-tuned with classification heads, reaching 85\% accuracy (SST-5, CFIMDB).
+    \item Built end-to-end forecasting platform combining LSTM for price trends and GNN for news sentiment graphs, improving volatility F1 by
+2.3 pts and lowering error 12\% vs ARIMA.
+    \item Deployed training/inference stack with Flask, Gunicorn, and Nginx on DigitalOcean; containerized services and batch scoring pipelines.
   \end{tightbullets}
 }
 
@@ -295,14 +286,15 @@ B.S. in Computer Science and B.S. in Chemical Engineering \;|\; GPA: 3.6/4.0 \hf
 \BeginSection{Skills}
 \begin{skillsauto}
 \skillrow{Languages}{Python, C++, SQL, TypeScript}
-\skillrow{CV \& OCR}{OpenCV, PyTorch, CLIP; layout-aware OCR (PaddleOCR/DocTR), Tesseract; image preprocessing \& QA}
-\skillrow{LLMs}{Transformers, LoRA/QLoRA, RAG, prompt engineering; LangChain/CrewAI}
-\skillrow{Data \& ETL}{PySpark, Airflow; BeautifulSoup/requests; pandas/NumPy; schema validation; Spotify/YouTube APIs}
-\skillrow{Dashboards \& Web}{Streamlit; Node.js/Next.js; REST/webhooks}
-\skillrow{Cloud/Infra}{AWS (ECS/EC2/S3/Lambda/API GW), Docker, CI/CD, MLflow, Linux}
+\skillrow{ML / Distributed Training}{PyTorch DDP, Hugging Face, Transformers, LoRA/QLoRA, DeepSpeed, PyTorch Lightning, JAX}
+\skillrow{MLOps \& Serving}{Docker, Kubernetes, MLflow, FastAPI, Flask, vLLM, CI/CD, observability (latency, drift, structured logs)}
+\skillrow{Data \& Big Data Infra}{PySpark, Spark ML, Apache Beam, Airflow, BigQuery, PostgreSQL, Redis, MongoDB}
+\skillrow{Cloud \& Systems}{AWS (ECS, EC2, S3, Lambda, API Gateway), GCP (BigQuery, Dataproc), Azure ML, ROS2, WebSocket, kernel
+modules, ftrace}
+\skillrow{Soft Skills}{Communication, Teamwork, Problem Solving}
 \end{skillsauto} 
 
 % ===== Embedded machine-readable counts =====
-\EmbedCounts
-
+% \EmbedCounts
+\enlargethispage{2\baselineskip}  % <-- add this
 \end{document}

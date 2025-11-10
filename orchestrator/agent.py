@@ -142,6 +142,39 @@ Examples:
 - “Backfill missing job descriptions in my database”
 - “Show me recent roles at OpenAI or Anthropic”
 
+### Resume customization (`resume_customization_agent`)
+Use this when the user (or another agent) wants to:
+- tailor/customize the LaTeX resume for a specific job/company, or
+- update skills/bullets based on a target skills list and a “what_is_missing” analysis.
+
+Routing:
+- On these intents, **transfer_to_agent(resume_customization_agent)**.
+- In the message you send, include (when available):
+  - job title and company,
+  - the “Target skills for this job” list,
+  - the “What is missing” text / recommendations,
+  - any job row identifier from Job_Search_Database if you need to link the resume to a job.
+
+`resume_customization_agent` will:
+- Edit only the Experience, Projects, and Skills sections in `resume_customization/main.tex`,
+- rebuild `resume_customization/build/main.pdf`, and
+- upload the PDF to the Drive folder in `RESUME_CUSTOMIZATION_FOLDER_ID`.
+
+Final answer format from `resume_customization_agent`:
+- Always a **single JSON object**, no extra prose, of the form:
+
+  {
+    "status": "success" | "error",
+    "job_title": "<job title or null>",
+    "company": "<company or null>",
+    "drive_file_id": "<Drive file id or null>",
+    "summary_of_changes": "<short summary of changes or error>"
+  }
+
+When you receive this JSON:
+- Treat it as-is (no extra wrapping or markdown).
+- If another agent or system needs the tailored resume, use `drive_file_id`.
+
 ### Match agent:
 
 - Use matching_agent when the user wants to **identify or tag a subset of jobs from Job_Search_Database based on structured fields** such as Years of Experience and Location.
@@ -253,11 +286,10 @@ from google_sheets_service.agent_google_sheets import google_sheets_agent
 from google_drive_service.agent_google_drive import google_drive_agent
 from google_search_service.agent_google_search import google_search_agent
 from jobs_service.jobs_agent import root_agent as jobs_root_agent  
-from apollo_service.manager_apollo_agent import root_apollo_agent as apollo_agent_main
-from call_service.agent_call import elevenlabs_calling_agent as calling_agent
+from resume_customization_service.agent_resume_customization import resume_customization_agent as resume_customization_agent
+# from apollo_service.manager_apollo_agent import root_apollo_agent as apollo_agent_main
+# from call_service.agent_call import elevenlabs_calling_agent as calling_agent
 from matching_service.agent_matching import matching_agent as matching_agent
-
-# from matching_service.matching import match_agent as match_agent
 
 # Hook up search agent as AgentTool 
 _search_tool = AgentTool(agent=google_search_agent)
@@ -272,7 +304,7 @@ orchestrator_agent = Agent(
     name="orchestrator",
     description=ORCH_INSTRUCTIONS,
     generate_content_config=types.GenerateContentConfig(temperature=0.2),
-    sub_agents=[calendar_agent, google_docs_agent, gmail_agent, google_sheets_agent, google_drive_agent, jobs_root_agent, apollo_agent_main, matching_agent, calling_agent ], #apollo_agent, match_agent],
+    sub_agents=[calendar_agent, google_docs_agent, gmail_agent, google_sheets_agent, google_drive_agent, jobs_root_agent, matching_agent, resume_customization_agent], # calling_agent , apollo_agent_main],
     tools=[_search_tool],  # lets the LLM explicitly hand off; no search tool here
 )
 

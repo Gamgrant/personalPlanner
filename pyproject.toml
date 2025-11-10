@@ -158,12 +158,9 @@ dependencies = [
     "anthropic>=0.72.0",
     "docker>=7.1.0",
     "pypdf>=6.1.3",
-<<<<<<< HEAD
     "flask>=3.1.2",
     "elevenlabs>=2.22.0",
-=======
     "pypdf2>=3.0.1",
->>>>>>> 216fc76 (hooked up ui with cloud run, added matching agent)
 ]
 
 
@@ -171,7 +168,7 @@ dependencies = [
 google-adk = { git = "https://github.com/google/adk-python.git", rev = "main" }
 
 [tool.setuptools]
-packages = ["orchestrator", "calendar_service", "google_docs_service"]
+packages = ["orchestrator", "calendar_service", "google_docs_service", "resume_customization",]
 
 [tool.uv]
 package = true

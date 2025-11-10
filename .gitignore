@@ -9,3 +9,8 @@
 .creds/.env
 *.egg-info/
 personalplanner.egg-info/
+resume_customization/build/main.aux
+resume_customization/build/main.fdb_latexmk
+resume_customization/build/main.fls
+resume_customization/build/main.log
+resume_customization/build/main.pdf

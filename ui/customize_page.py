@@ -1,8 +1,12 @@
 # customize_page.py
 import os
+import json
+import re
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
+
 from utils.google_service_helpers import get_sheets_service
 from orchestrator_client import create_session, run_orchestrator
 from jobs_service.sub_agent.enrichment_agent import enrich_job_search_database
@@ -11,6 +15,17 @@ from jobs_service.sub_agent.enrichment_agent import enrich_job_search_database
 JOB_SEARCH_SPREADSHEET_ID = os.environ.get("JOB_SEARCH_SPREADSHEET_ID")
 # Tab is 'Sheet1' by default
 JOB_SEARCH_RANGE = os.environ.get("JOB_SEARCH_RANGE", "Sheet1!A:Z")
+
+# ---- Prompt template for resume scoring (skills_list will be inserted dynamically) ----
+RESUME_SCORE_PROMPT_TEMPLATE = (
+    "Go to Google Drive folder (1oWZxO8czQvwjZ-RroN7Lx-jzZxcrzh2Q) and tell me how each of the PDFs "
+    "scores on this skills list: you can use google_drive_agent to access that Google Drive location, "
+    "but after that you need to use your own reasoning capabilities, and tell me out of 100% what each "
+    "resume scores against this list of skills:\n"
+    "{skills_list}\n\n"
+    "Return your final answer strictly as valid JSON: a list of objects, where each object has the keys "
+    "name, id, score, what_is_good, what_is_missing."
+)
 
 
 def top_row(back_label: str = "◀ back", on_back=None, extra=None):
@@ -32,6 +47,12 @@ def _ensure_session_flags():
     st.session_state.setdefault("jobs_pipeline_started", False)
     st.session_state.setdefault("jobs_pipeline_complete", False)
     st.session_state.setdefault("orchestrator_session_created", False)
+
+    # For customize-resume flow
+    st.session_state.setdefault("current_custom_job", None)
+    st.session_state.setdefault("needs_resume_scoring", False)
+    st.session_state.setdefault("resume_scores", None)
+    st.session_state.setdefault("open_resume_index", None)
 
 
 def _make_buttons_green():
@@ -144,7 +165,8 @@ def _mark_customize_now(selected_row_indices):
 def _render_customize_job_selector():
     """
     Renders a 'Select job' dropdown populated with rows where customize_now == 'yes'.
-    Stores a mapping from job name -> row index in session_state for later use.
+    - Includes a dummy default option: '-- Select a job --'
+    - When a real job is picked, sets flags to trigger resume scoring.
     """
     df = _fetch_jobs_df()
     if df.empty:
@@ -173,18 +195,31 @@ def _render_customize_job_selector():
     mapping = {job: int(idx) for job, idx in zip(job_names, subset.index)}
     st.session_state["customize_now_job_rows"] = mapping
 
-    current_job = st.session_state.get("current_custom_job")
-    default_index = 0
-    if current_job in job_names:
-        default_index = job_names.index(current_job)
+    dummy_label = "-- Select a job --"
+    options = [dummy_label] + job_names
 
-    selected_job = st.selectbox(
+    # Use whatever is currently in the widget state if present, otherwise dummy
+    current_label = st.session_state.get("select_job_dropdown", dummy_label)
+    if current_label not in options:
+        current_label = dummy_label
+
+    selected_label = st.selectbox(
         "Select job",
-        job_names,
-        index=default_index,
+        options,
+        index=options.index(current_label),
         key="select_job_dropdown",
     )
-    st.session_state["current_custom_job"] = selected_job
+
+    if selected_label == dummy_label:
+        st.session_state["current_custom_job"] = None
+    else:
+        prev_job = st.session_state.get("current_custom_job")
+        if prev_job != selected_label:
+            # Job changed → need to rescore resumes
+            st.session_state["current_custom_job"] = selected_label
+            st.session_state["needs_resume_scoring"] = True
+            st.session_state["resume_scores"] = None
+            st.session_state["open_resume_index"] = None
 
 
 def _filter_good_matches(df: pd.DataFrame) -> pd.DataFrame:
@@ -235,11 +270,9 @@ def _run_jobs_pipeline_if_needed():
         run_orchestrator(search_prompt)
 
         # 2) Deterministic enrichment of Description + Degree/YOE/Skills
-        #    (no LLM routing: call the Python helper directly)
         try:
             # max_rows=None → all; overwrite=False → only fill empty G/H/I
             enrich_msg = enrich_job_search_database(max_rows=None, overwrite=False)
-            # If you want to debug: st.text(enrich_msg)
         except Exception as e:
             st.error(f"Error enriching job descriptions and skills: {e}")
 
@@ -352,7 +385,6 @@ def _render_scraped_jobs_view():
 
     # ---- First row: place "Customize selected" button aligned above Customize? column ----
     button_cols = st.columns(col_widths)
-    # Only use the last column for the button; others stay empty
     customize_clicked = button_cols[-1].button("Customize selected", use_container_width=True)
 
     # ---- Header row ----
@@ -383,7 +415,6 @@ def _render_scraped_jobs_view():
                 html = f"<div class='{classes}'>{value}</div>"
             elif col_name == "Website":
                 classes = "truncate-3 website-col"
-                # Make URL clickable; if it's not a URL, just render text
                 url = value.strip()
                 if url.startswith("http://") or url.startswith("https://"):
                     html = (
@@ -400,7 +431,6 @@ def _render_scraped_jobs_view():
             cols[j].markdown(html, unsafe_allow_html=True)
 
         checkbox_key = f"scraped_job_customize_{idx}"  # idx is original DF index
-        # Label hidden; centered via CSS; header already says "Customize?"
         cols[-1].checkbox(" ", key=checkbox_key, label_visibility="collapsed")
 
     if customize_clicked:
@@ -424,6 +454,166 @@ def _render_scraped_jobs_view():
             st.session_state["customize_view"] = "customize_resumes"
             st.rerun()
 
+
+def _get_job_skills(job_name: str) -> str:
+    """
+    Look up the Skills cell from the sheet for the given job name,
+    using the customize_now_job_rows mapping.
+    """
+    if not job_name:
+        return ""
+    df = _fetch_jobs_df()
+    if df.empty or "Skills" not in df.columns:
+        return ""
+    mapping = st.session_state.get("customize_now_job_rows", {}) or {}
+    row_idx = mapping.get(job_name)
+    if row_idx is None:
+        return ""
+    try:
+        value = df.loc[row_idx, "Skills"]
+    except Exception:
+        return ""
+    return str(value).strip()
+
+
+def _score_resumes_for_current_job():
+    """
+    Calls the orchestrator to score resumes in the configured Drive folder
+    against the Skills list for the currently-selected job.
+    Stores results in session_state["resume_scores"].
+    """
+    job_name = st.session_state.get("current_custom_job")
+    skills_list = _get_job_skills(job_name)
+
+    # Fallback: if for some reason the skills cell is empty, still give a sane list
+    if not skills_list:
+        skills_list = (
+            "Statistical Analysis, Probability Theory, Experimental Design, Data Cleaning, "
+            "Feature Engineering, Python, R, SQL, Machine Learning, Deep Learning, "
+            "Natural Language Processing, Data Visualization, Big Data (Spark, Hadoop), "
+            "Cloud Computing (AWS, GCP, Azure), ETL Pipelines, Model Evaluation, "
+            "Hyperparameter Tuning, MLOps, Version Control (Git), API Integration"
+        )
+
+    prompt = RESUME_SCORE_PROMPT_TEMPLATE.format(skills_list=skills_list)
+
+    events = run_orchestrator(prompt)
+
+    # 1. Find last model event with text
+    last_with_text = None
+    for ev in reversed(events):
+        if ev.get("modelVersion") and ev.get("content"):
+            parts = ev["content"].get("parts", [])
+            if parts and isinstance(parts[0], dict) and "text" in parts[0]:
+                last_with_text = ev
+                break
+
+    if last_with_text is None:
+        st.error("No model text response found when scoring resumes.")
+        return
+
+    raw_text = last_with_text["content"]["parts"][0]["text"]
+
+    # 2. Strip ```json ... ``` fences if they exist
+    match = re.search(r"```json\s*(.*?)\s*```", raw_text, re.DOTALL | re.IGNORECASE)
+    json_str = match.group(1) if match else raw_text
+
+    # 3. Parse the JSON array of resumes
+    try:
+        resumes = json.loads(json_str)
+        if not isinstance(resumes, list):
+            raise ValueError("Parsed JSON is not a list.")
+    except Exception as e:
+        st.error(f"Failed to parse resume scoring JSON: {e}")
+        return
+
+    st.session_state["resume_scores"] = resumes
+
+
+def _render_customize_resumes_view():
+    """Main UI for Customize resumes tab: dropdown already rendered in top_row."""
+    st.subheader("Customize resumes")
+
+    job_name = st.session_state.get("current_custom_job")
+
+    # Spinner + orchestrator call when a real job has just been selected
+    if st.session_state.get("needs_resume_scoring") and job_name:
+        with st.spinner("Analyzing your resumes against this job's skill list..."):
+            _score_resumes_for_current_job()
+        st.session_state["needs_resume_scoring"] = False
+
+    resumes = st.session_state.get("resume_scores")
+
+    if not job_name:
+        st.info("Select a job from the dropdown above to start.")
+        return
+
+    if not resumes:
+        st.info("Select a job from the dropdown above to score your resumes.")
+        return
+
+    # --- Buttons for each resume ---
+    st.markdown("#### Pick a resume to review and customize")
+
+    cols = st.columns(len(resumes))
+    for i, r in enumerate(resumes):
+        name = r.get("name", f"Resume {i+1}")
+        score = r.get("score", "N/A")
+        label = f"{name}\nScore: {score}%"
+        with cols[i]:
+            if st.button(label, key=f"resume_btn_{i}"):
+                st.session_state["open_resume_index"] = i
+                st.rerun()
+
+    # --- "Popup" panel for selected resume ---
+    open_idx = st.session_state.get("open_resume_index")
+    if open_idx is None:
+        return
+    if not (0 <= open_idx < len(resumes)):
+        return
+
+    selected = resumes[open_idx]
+    job_skills = _get_job_skills(job_name)
+
+    st.markdown("---")
+    st.markdown(f"### Preview & analysis for `{selected.get('name', '')}`")
+
+    with st.container(border=True):
+        top_cols = st.columns([1, 1])
+        with top_cols[0]:
+            if st.button("Cancel", key="popup_cancel"):
+                st.session_state["open_resume_index"] = None
+                st.rerun()
+        with top_cols[1]:
+            if st.button("Customize", key="popup_customize", type="primary"):
+                # Placeholder for future customization pipeline
+                st.success("Customize action is not implemented yet, but this is where it will run.")
+
+        left_col, right_col = st.columns([2.5, 1.5])
+        with left_col:
+            file_id = selected.get("id")
+            if file_id:
+                # Google Drive preview iframe (taller so more of the PDF is visible)
+                url = f"https://drive.google.com/file/d/{file_id}/preview"
+                components.iframe(url, height=900)
+            else:
+                st.write("No file ID available for this resume.")
+
+        with right_col:
+            # 1) Skills from the sheet for this job (top-right)
+            st.markdown("**Target skills for this job (from sheet)**")
+            if job_skills:
+                st.write(job_skills)
+            else:
+                st.write("_No skills found in the sheet for this job._")
+
+            # 2) What is good
+            st.markdown("**What is good**")
+            st.write(selected.get("what_is_good", ""))
+
+            # 3) What is missing
+            st.markdown("**What is missing**")
+            st.write(selected.get("what_is_missing", ""))
 
 
 def page_customize():
@@ -517,8 +707,7 @@ def page_customize():
 
         # ======= CUSTOMIZE RESUMES VIEW =======
         elif view == "customize_resumes":
-            st.subheader("Customize resumes")
-            st.info("Resume customization view will go here (to be implemented).")
+            _render_customize_resumes_view()
 
         # ======= OUTREACH VIEW =======
         elif view == "outreach":

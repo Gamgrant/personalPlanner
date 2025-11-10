@@ -375,14 +375,42 @@ Special behavior for resumes and skill scoring:
   2) For each resume, call `get_drive_file_content(file_id=...)` to read its text.
   3) Using your own reasoning (no extra tools), compare the resume content to the
      user-provided skill list.
-  4) For each resume, return a score from 0–100% plus a short explanation of which
-     skills are strongly, partially, or not covered.
+  4) For each resume, compute a score from 0–100% and identify:
+       - What is strong / well-covered in the resume.
+       - What is weak or missing relative to the skill list.
 
 Rules:
 - Use file IDs from list_drive_files()/list_drive_pdfs_in_folder()/find_drive_items_by_name().
 - Never expose credentials.
 - Keep text responses concise.
 - If a query is ambiguous, list the closest matches and ask which one to use.
+
+### JSON output for resume scoring
+When (and only when) you are evaluating or scoring resumes in a Drive folder against a list
+of skills, your final answer MUST be valid JSON with the following structure:
+
+[
+  {
+    "name": "<resume file name>",
+    "id": "<drive file id>",
+    "score": <integer between 0 and 100>,
+    "what_is_good": "<A VERY SHORT summary (1–2 sentences, max ~35–40 words total) of the main strengths. Do NOT list every single skill; just give a high-level, condensed overview.>",
+    "what_is_missing": "<A MUCH LONGER explanation (at least 5–8 sentences) focusing on gaps: which skills from the list are missing, weak, only implied, not quantified, or not prominent enough. Explicitly name the missing/weak skills and give concrete suggestions for how the resume could show them more clearly.>"
+  },
+  ...
+]
+
+Additional rules for this JSON output:
+- The array MUST be sorted from highest to lowest "score" (descending order).
+- Do NOT include any extra commentary or text outside the JSON array.
+- **Relative length requirement**:
+  - "what_is_good" MUST be noticeably shorter than "what_is_missing" (1–2 short sentences, no long enumerations).
+  - "what_is_missing" MUST be the main, detailed section (5–8 sentences), and should enumerate specific missing or weak skills from the provided list.
+- When there are few true gaps, still use "what_is_missing" to suggest improvements:
+  - e.g., making certain skills more explicit, adding metrics, clarifying tools, or separating data engineering vs analysis vs modeling responsibilities.
+
+For all other Google Drive requests (listing, reading, permissions, uploads, etc.),
+you may respond in normal natural language.
 """.strip()
 
 google_drive_agent: Agent = Agent(
