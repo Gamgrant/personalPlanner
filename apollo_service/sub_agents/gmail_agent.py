@@ -1,12 +1,9 @@
 import os
 import base64
-import io
-import mimetypes
 from typing import Optional, List, Any, Dict
 from datetime import datetime
 
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaIoBaseDownload
 from email.message import EmailMessage
 
 from google.adk.agents import Agent
@@ -19,6 +16,10 @@ from utils.google_service_helpers import (
 )
 from utils.time_utils import get_time_context
 
+# ---------------------------------------------------
+# CONFIG
+# ---------------------------------------------------
+
 MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
 
 SCOPES = [
@@ -27,18 +28,18 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
 ]
 
-# Prefer explicit spreadsheet id from env (no hard-coded names)
+# Prefer explicit spreadsheet id from env
 JOB_SEARCH_SPREADSHEET_ID = (os.environ.get("JOB_SEARCH_SPREADSHEET_ID") or "").strip()
 
-# Optional legacy names as a fallback if env is not set
+# Optional legacy names as fallback
 CANDIDATE_SPREADSHEET_NAMES = [
     "Job_Search_Database",
     "job_search_spreadsheet",
 ]
 
-# -------------------------------------------------------------------
-# Service helpers
-# -------------------------------------------------------------------
+# ---------------------------------------------------
+# SERVICE HELPERS
+# ---------------------------------------------------
 
 def get_gmail_service() -> object:
     return _get_gmail_service()
@@ -49,9 +50,9 @@ def get_drive_service() -> object:
 def get_sheets_service() -> object:
     return get_google_service("sheets", "v4", SCOPES, "GMAIL_SHEETS")
 
-# -------------------------------------------------------------------
-# Time context
-# -------------------------------------------------------------------
+# ---------------------------------------------------
+# TIME CONTEXT
+# ---------------------------------------------------
 
 def make_time_context(preferred_tz: Optional[str] = None) -> dict:
     ctx = get_time_context(preferred_tz)
@@ -69,9 +70,9 @@ def make_time_context(preferred_tz: Optional[str] = None) -> dict:
         "iso_timestamp": ctx["datetime"],
     }
 
-# -------------------------------------------------------------------
-# Gmail low-level helpers
-# -------------------------------------------------------------------
+# ---------------------------------------------------
+# GMAIL HELPERS
+# ---------------------------------------------------
 
 def _build_mime_message(
     to: List[str],
@@ -79,7 +80,12 @@ def _build_mime_message(
     body_text: str,
     cc: Optional[List[str]] = None,
     bcc: Optional[List[str]] = None,
+    attachments: Optional[List[Dict[str, Any]]] = None,
 ) -> EmailMessage:
+    """
+    Build an EmailMessage with optional attachments.
+    attachments: list of { "filename": str, "mime_type": str, "data": bytes }
+    """
     msg = EmailMessage()
     msg["To"] = ", ".join(to)
     msg["Subject"] = subject
@@ -87,30 +93,49 @@ def _build_mime_message(
         msg["Cc"] = ", ".join(cc)
     if bcc:
         msg["Bcc"] = ", ".join(bcc)
+
     msg.set_content(body_text or "")
+
+    if attachments:
+        for att in attachments:
+            data = att.get("data")
+            if not data:
+                continue
+            filename = att.get("filename") or "attachment"
+            mime_type = att.get("mime_type") or "application/octet-stream"
+            if "/" in mime_type:
+                maintype, subtype = mime_type.split("/", 1)
+            else:
+                maintype, subtype = "application", "octet-stream"
+
+            msg.add_attachment(
+                data,
+                maintype=maintype,
+                subtype=subtype,
+                filename=filename,
+            )
+
     return msg
 
 def _encode_message(msg: EmailMessage) -> Dict[str, str]:
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
     return {"raw": raw}
 
-# -------------------------------------------------------------------
-# Spreadsheet helpers (Job_Search_Database)
-# -------------------------------------------------------------------
+# ---------------------------------------------------
+# SHEETS HELPERS
+# ---------------------------------------------------
 
 def _find_jobs_spreadsheet_id() -> str:
     """
     Resolve the Job Search spreadsheet ID.
 
     Priority:
-      1. JOB_SEARCH_SPREADSHEET_ID env var (recommended)
+      1. JOB_SEARCH_SPREADSHEET_ID env var
       2. Fallback: search Drive by legacy names
     """
-    # 1) Preferred: configured explicitly
     if JOB_SEARCH_SPREADSHEET_ID:
         return JOB_SEARCH_SPREADSHEET_ID
 
-    # 2) Fallback by name (for backwards compatibility)
     drive = get_drive_service()
     try:
         for name in CANDIDATE_SPREADSHEET_NAMES:
@@ -171,24 +196,87 @@ def _get_header_map(header_row: List[str]) -> Dict[str, int]:
             m[name] = idx
     return m
 
-# -------------------------------------------------------------------
-# Core Tool: Create drafts from Outreach email script
-# -------------------------------------------------------------------
+# ---------------------------------------------------
+# DRIVE / RESUME ATTACHMENT HELPER
+# ---------------------------------------------------
+
+def _get_resume_attachment_from_id(file_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Given a Drive file ID, fetch bytes + metadata to attach to an email.
+    Returns:
+      {
+        "filename": str,
+        "mime_type": str,
+        "data": bytes,
+      }
+    or None if anything fails.
+    """
+    file_id = (file_id or "").strip()
+    if not file_id:
+        return None
+
+    drive = get_drive_service()
+
+    try:
+        meta = drive.files().get(
+            fileId=file_id,
+            fields="name,mimeType",
+            supportsAllDrives=True,
+        ).execute()
+        name = meta.get("name") or "resume.pdf"
+        mime_type = meta.get("mimeType") or "application/pdf"
+
+        data = drive.files().get_media(
+            fileId=file_id,
+            supportsAllDrives=True,
+        ).execute()
+
+        if not isinstance(data, (bytes, bytearray)):
+            # In weird cases, convert to bytes-ish
+            data = bytes(str(data), "utf-8")
+
+        return {
+            "filename": name,
+            "mime_type": mime_type,
+            "data": data,
+        }
+
+    except HttpError as e:
+        print(f"[GMAIL-OUTREACH] Failed to fetch resume file {file_id}: {e}")
+        return None
+
+# ---------------------------------------------------
+# CORE TOOL: CREATE PERSONALIZED DRAFTS (WITH RESUME ATTACHMENT)
+# ---------------------------------------------------
 
 def create_drafts_from_outreach_scripts(max_drafts: int = 50) -> str:
     """
-    Reads Job_Search_Database, and for each row that has:
-      - Outreach Name
-      - Outreach Email
-      - Outreach email script
-    creates a Gmail draft (NOT sent) addressed to that recruiter.
+    Auto behavior (no confirmation, no extra queries):
+
+    For each row in the jobs sheet:
+      - Uses:
+          Jobs (job title)
+          Company
+          Outreach Name
+          Outreach Email
+          resume_id_latex_done (Drive file ID for customized resume)
+          Outreach Email Script (body text generated by script_agent)
+      - If:
+          • Outreach Email exists
+          • Outreach Email Script exists (non-empty)
+          • resume_id_latex_done exists
+        Then:
+          - Fetch resume file by ID from Drive.
+          - Attach that resume to the email.
+          - Create a Gmail DRAFT to Outreach Email with:
+              * Subject based on job title + company.
+              * Body from Outreach Email Script.
+              * Attached resume file.
 
     Rules:
-    - One draft per unique Outreach Email (avoid spamming the same recruiter).
-    - Subject is generated from Jobs + Company when available.
-    - Body is primarily the Outreach email script from the sheet.
-    - Uses LLM reasoning (this agent) to lightly refine subject/body if needed,
-      but does not modify the sheet here.
+      - Never send emails, only create drafts.
+      - One draft per row that satisfies the conditions.
+      - Does NOT modify the sheet.
     """
     gmail = get_gmail_service()
     sheets = get_sheets_service()
@@ -205,15 +293,16 @@ def create_drafts_from_outreach_scripts(max_drafts: int = 50) -> str:
                 return idx
         return None
 
-    jobs_idx = col_index("jobs")
+    jobs_idx = col_index("jobs", "job", "job title", "role")
     company_idx = col_index("company")
     outreach_name_idx = col_index("outreach name")
-    outreach_email_idx = col_index("outreach email")
-    script_idx = col_index("outreach email script")
+    outreach_email_idx = col_index("outreach email", "outreach_email")
+    script_idx = col_index("outreach email script", "outreach_email_script")
+    resume_id_idx = col_index("resume_id_latex_done", "resume id", "resume_id")
 
     if outreach_email_idx is None or script_idx is None:
         raise RuntimeError(
-            "[GMAIL-OUTREACH] Missing required columns: 'Outreach Email' or 'Outreach email script'."
+            "[GMAIL-OUTREACH] Missing required columns: 'Outreach Email' or 'Outreach Email Script'."
         )
 
     try:
@@ -228,7 +317,6 @@ def create_drafts_from_outreach_scripts(max_drafts: int = 50) -> str:
     if not rows:
         return "[GMAIL-OUTREACH] No data rows found."
 
-    seen_emails = set()
     created = 0
 
     for row in rows:
@@ -240,61 +328,68 @@ def create_drafts_from_outreach_scripts(max_drafts: int = 50) -> str:
                 return ""
             return (row[idx] or "").strip()
 
+        job_title = get(jobs_idx)
+        company = get(company_idx)
         recruiter_name = get(outreach_name_idx)
         recruiter_email = get(outreach_email_idx)
         script_body = get(script_idx)
-        job_title = get(jobs_idx)
-        company = get(company_idx)
+        resume_file_id = get(resume_id_idx)
 
-        if not recruiter_email or not script_body:
+        # Require recruiter email, script, and resume id
+        if not recruiter_email or not script_body or not resume_file_id:
             continue
 
-        # One draft per recruiter email
-        if recruiter_email.lower() in seen_emails:
-            continue
-
-        seen_emails.add(recruiter_email.lower())
-
-        # Subject generation (LLM-guided but simple here)
+        # Build subject
         if job_title and company:
-            subject = f"Interest in {job_title} opportunities at {company}"
+            subject = f"Application for {job_title} at {company}"
+        elif job_title:
+            subject = f"Application for {job_title}"
         elif company:
             subject = f"Exploring opportunities at {company}"
         else:
-            subject = "Exploring potential opportunities"
+            subject = "Application for relevant opportunities"
 
-        # The script_body is assumed to already be a well-formed email body
-        # generated by script_agent. We don't alter it here beyond stripping.
+        # Fallback greeting
+        greeting_name = recruiter_name or "there"
+
+        # If the script body doesn't start with greeting, we can leave as-is;
+        # assume script_agent already formatted it. Just trust the script.
         body_text = script_body.strip()
 
-        # Build draft MIME message
+        # Get resume attachment
+        attachments: List[Dict[str, Any]] = []
+        att = _get_resume_attachment_from_id(resume_file_id)
+        if att:
+            attachments.append(att)
+
         msg = _build_mime_message(
             to=[recruiter_email],
             subject=subject,
             body_text=body_text,
+            attachments=attachments,
         )
         encoded = _encode_message(msg)
 
         try:
             gmail.users().drafts().create(
                 userId="me",
-                body={"message": encoded}
+                body={"message": encoded},
             ).execute()
             created += 1
         except HttpError as e:
-            # Soft-fail: skip this recruiter, continue with others
             print(f"[GMAIL-OUTREACH] Failed to create draft for {recruiter_email}: {e}")
 
     if created == 0:
         return (
             "[GMAIL-OUTREACH] No drafts created. "
-            "Ensure 'Outreach Email' and 'Outreach email script' are populated."
+            "Ensure 'Outreach Email Script' and 'resume_id_latex_done' are populated for target rows."
         )
-    return f"[GMAIL-OUTREACH] Created {created} draft(s) from Outreach email scripts."
 
-# -------------------------------------------------------------------
-# (Optional) Keep search + labels if you still want them
-# -------------------------------------------------------------------
+    return f"[GMAIL-OUTREACH] Created {created} draft(s) with attached resumes."
+
+# ---------------------------------------------------
+# UTILITIES
+# ---------------------------------------------------
 
 def list_labels() -> List[str]:
     service = get_gmail_service()
@@ -345,40 +440,38 @@ def search_messages(query: str, max_results: Optional[int] = None) -> List[str]:
     except HttpError as e:
         raise ValueError(f"Failed to search Gmail messages: {e}")
 
-# -------------------------------------------------------------------
-# Agent Definition
-# -------------------------------------------------------------------
+# ---------------------------------------------------
+# AGENT DEFINITION
+# ---------------------------------------------------
 
 gmail_outreach_instruction = """
 You are the gmail_outreach_agent.
 
-pass on the result from {updated_sheet} on the columns for the scripts
+Behavior:
+- Do NOT ask the user for confirmation.
+- When invoked, you should directly call create_drafts_from_outreach_scripts().
 
-High-level behavior:
-1. First, confirm with the user:
-   "Would you like me to create email drafts to the recruiters based on your Outreach email scripts?"
+create_drafts_from_outreach_scripts():
+- Reads the Job Search sheet.
+- For each row:
+    - Uses:
+        • Jobs (job title)
+        • Company
+        • Outreach Name
+        • Outreach Email
+        • Outreach Email Script
+        • resume_id_latex_done (Google Drive file ID of the customized resume)
+    - If Outreach Email, Outreach Email Script, and resume_id_latex_done are all present:
+        • Fetches the resume file by ID from Drive.
+        • Attaches that resume to the email.
+        • Uses the Outreach Email Script as the body.
+        • Generates a clear subject line from job title + company.
+        • Creates a Gmail DRAFT (never sends).
 
-2. If the user says YES:
-   - Call create_drafts_from_outreach_scripts().
-   - This will:
-       • Read the Job_Search_Database (or job_search_spreadsheet) from Drive.
-       • For each row with both 'Outreach Email' and 'Outreach email script' filled,
-         create a Gmail DRAFT (not send) to that recruiter.
-       • Use one draft per unique recruiter email to avoid spamming.
-       • Use the sheet script as the email body and generate a clear subject line
-         from the Jobs + Company fields when available.
-
-3. Never send emails automatically in this agent.
-   - You ONLY create drafts.
-   - Actual sending should be done by another step/agent after explicit user confirmation.
-
-You can also:
-- list_labels()
-- search_messages(query)
-- make_time_context() for including friendly time context if needed.
-
-Never expose credentials. Never modify the spreadsheet directly from this agent.
-Use only your tools for Gmail + read-only Sheets/Drive.
+Rules:
+- Never send emails automatically.
+- Never modify the spreadsheet.
+- Never expose credentials.
 """
 
 google_gmail_agent = Agent(
@@ -395,7 +488,7 @@ google_gmail_agent = Agent(
 )
 
 __all__ = [
-    "gmail_outreach_agent",
+    "google_gmail_agent",
     "create_drafts_from_outreach_scripts",
     "list_labels",
     "search_messages",

@@ -38,12 +38,8 @@ CANDIDATE_SPREADSHEET_NAMES = [
 
 INPUT_SHEET_NAME = "Sheet1"
 
-# Webhook URL (already includes token)
-WEBHOOK_URL = (os.environ.get("APOLLO_WEBHOOK_URL") or "").strip()
-if not WEBHOOK_URL:
-    raise EnvironmentError(
-        "APOLLO_WEBHOOK_URL is not set. It must include the token and point to /apollo-webhook."
-    )
+# ✅ Hard-coded outreach phone (no Apollo phone reveal)
+HARDCODED_OUTREACH_PHONE = "+16082074247"
 
 # ---------------------------------------------------
 # GOOGLE HELPERS
@@ -83,25 +79,71 @@ def _find_spreadsheet_id() -> str:
         "JOB_SEARCH_SPREADSHEET_ID not set and no matching Job Search spreadsheet found."
     )
 
-def _get_header_map(spreadsheet_id: str) -> Dict[str, int]:
+INPUT_SHEET_NAME = "Sheet1"  # treated as a preference, not a hard requirement
+
+def _resolve_sheet_name(spreadsheet_id: str) -> str:
+    """
+    Pick a sheet name to use:
+      1. If INPUT_SHEET_NAME exists, use it.
+      2. Else use the first sheet in the doc.
+    """
     sheets = get_sheets_service()
+    try:
+        meta = sheets.spreadsheets().get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(title))",
+        ).execute()
+    except HttpError as e:
+        raise ValueError(f"[APOLLO] Failed to fetch spreadsheet metadata: {e}")
+
+    sheet_props = meta.get("sheets", []) or []
+    if not sheet_props:
+        raise ValueError("[APOLLO] Spreadsheet has no sheets.")
+
+    titles = [s["properties"]["title"] for s in sheet_props if "properties" in s]
+    if INPUT_SHEET_NAME in titles:
+        return INPUT_SHEET_NAME
+
+    # Fall back to the first sheet if Sheet1 is not present
+    return titles[0]
+
+
+def _get_header_map(spreadsheet_id: str) -> Dict[str, int]:
+    """
+    Read the header row from the chosen sheet and build:
+        normalized_header -> column_index (0-based)
+    """
+    sheets = get_sheets_service()
+    sheet_name = _resolve_sheet_name(spreadsheet_id)
+
     try:
         res = sheets.spreadsheets().values().get(
             spreadsheetId=spreadsheet_id,
-            range=f"{INPUT_SHEET_NAME}!A1:Z1",
+            range=f"{sheet_name}!A1:Z1",
         ).execute()
-        values = res.get("values", []) or []
-        if not values:
-            raise ValueError(f"No header row found in {INPUT_SHEET_NAME}.")
-        header_row = values[0]
     except HttpError as e:
-        raise ValueError(f"Failed to read header row: {e}")
+        # Surface the exact sheet+range we tried so it's debuggable
+        raise ValueError(
+            f"[APOLLO] Failed to read header row from '{sheet_name}'!A1:Z1: {e}"
+        )
 
+    values = res.get("values", []) or []
+    if not values:
+        raise ValueError(f"[APOLLO] No header row found in sheet '{sheet_name}'.")
+
+    header_row = values[0]
     header_map: Dict[str, int] = {}
     for idx, raw in enumerate(header_row):
         name = (raw or "").strip().lower()
         if name:
             header_map[name] = idx
+
+    if not header_map:
+        raise ValueError(
+            f"[APOLLO] Parsed empty header map from '{sheet_name}'. "
+            "Check that row 1 has your column names."
+        )
+
     return header_map
 
 def _normalize_domain(website: str) -> Optional[str]:
@@ -137,6 +179,9 @@ def _headers() -> Dict[str, str]:
     }
 
 def search_recruiters_at_company(domain: str, per_page: int = 5) -> List[Dict[str, Any]]:
+    """
+    Use /mixed_people/search to find recruiter-type roles at the given domain.
+    """
     url = f"{BASE_URL}/mixed_people/search"
     payload = {
         "q_organization_domains_list": [domain],
@@ -165,35 +210,6 @@ def search_recruiters_at_company(domain: str, per_page: int = 5) -> List[Dict[st
     data = resp.json()
     return data.get("people") or data.get("contacts") or data.get("persons") or []
 
-def extract_email_and_phone_simple(data: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Minimal extraction:
-      - email from person.email
-      - phone from person.contact.phone_numbers[0].sanitized_number
-    """
-    person = data.get("person") or {}
-
-    # Email: just take person.email if present
-    email = person.get("email")
-    if isinstance(email, str):
-        email = email.strip() or None
-    else:
-        email = None
-
-    # Phone: go straight to person.contact.phone_numbers[0].sanitized_number
-    phone = None
-    contact = person.get("contact") or {}
-    phone_numbers = contact.get("phone_numbers") or []
-
-    if isinstance(phone_numbers, list) and phone_numbers:
-        first = phone_numbers[0]
-        if isinstance(first, dict):
-            sn = first.get("sanitized_number") or first.get("sanitized_phone")
-            if isinstance(sn, str) and sn.strip():
-                phone = sn.strip()
-
-    return email, phone
-
 def match_person_for_contact(
     first_name: Optional[str] = None,
     last_name: Optional[str] = None,
@@ -202,10 +218,11 @@ def match_person_for_contact(
     linkedin_url: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
-    Call /people/match with phone reveal + webhook,
-    then:
-      - email  = person.email
-      - phone  = person.contact.phone_numbers[0].sanitized_number
+    Simplified: call /people/match to confirm and get email.
+    We are NOT using Apollo phone reveal here; phone will be filled with a fixed value.
+
+    Returns:
+        (email, None)
     """
     url = f"{BASE_URL}/people/match"
 
@@ -216,8 +233,7 @@ def match_person_for_contact(
         "domain": domain,
         "linkedin_url": linkedin_url,
         "reveal_personal_emails": False,
-        "reveal_phone_number": True,
-        "webhook_url": WEBHOOK_URL,
+        # 'reveal_phone_number' intentionally omitted
     }
     payload = {k: v for k, v in payload.items() if v}
 
@@ -236,7 +252,15 @@ def match_person_for_contact(
         print("[APOLLO] /people/match returned non-JSON body.")
         return (None, None)
 
-    return extract_email_and_phone_simple(data)
+    person = data.get("person") or {}
+    email = person.get("email")
+    if isinstance(email, str):
+        email = email.strip() or None
+    else:
+        email = None
+
+    # Phone is intentionally not taken from Apollo in this version
+    return (email, None)
 
 # ---------------------------------------------------
 # CORE TOOL
@@ -248,11 +272,11 @@ def populate_outreach_from_apollo(per_company_candidates: int = 5) -> str:
       - read Website → domain
       - search recruiters
       - pick top candidate
-      - /people/match with phone reveal
+      - /people/match (for email)
       - fill:
           Outreach Name
           Outreach Email
-          Outreach Phone Number
+          Outreach Phone Number (always set to HARDCODED_OUTREACH_PHONE)
     """
     spreadsheet_id = _find_spreadsheet_id()
     sheets = get_sheets_service()
@@ -319,13 +343,16 @@ def populate_outreach_from_apollo(per_company_candidates: int = 5) -> str:
         )
         linkedin = top.get("linkedin_url")
 
-        email, phone = match_person_for_contact(
+        email, _ = match_person_for_contact(
             first_name=first or None,
             last_name=last or None,
             domain=org_domain,
             person_id=pid,
             linkedin_url=linkedin or None,
         )
+
+        # Use fixed phone number for all rows (if column exists)
+        phone = HARDCODED_OUTREACH_PHONE if outreach_phone_col_idx is not None else None
 
         if not (full_name or email or phone):
             continue
@@ -346,7 +373,7 @@ def populate_outreach_from_apollo(per_company_candidates: int = 5) -> str:
                 "values": [[email]],
             })
 
-        # Outreach Phone Number (from sanitized_number)
+        # Outreach Phone Number (fixed)
         if outreach_phone_col_idx is not None and phone:
             phone_col_letter = _col_letter(outreach_phone_col_idx)
             updates.append({
@@ -357,7 +384,7 @@ def populate_outreach_from_apollo(per_company_candidates: int = 5) -> str:
     if not updates:
         return (
             "No outreach contacts found or written. "
-            "Check Website values, Apollo config, webhook, and column headers."
+            "Check Website values, Apollo config, and column headers."
         )
 
     try:
@@ -378,7 +405,7 @@ def populate_outreach_from_apollo(per_company_candidates: int = 5) -> str:
 
     return (
         f"Updated Outreach Name, Outreach email, and Outreach Phone Number "
-        f"for {len(touched_rows)} row(s) using Apollo."
+        f"for {len(touched_rows)} row(s) using Apollo (phone is fixed to {HARDCODED_OUTREACH_PHONE})."
     )
 
 # ---------------------------------------------------
@@ -390,10 +417,10 @@ apollo_outreach_agent = Agent(
     name="apollo_outreach_agent",
     description=(
         "Finds recruiter contacts for companies in the jobs sheet using Apollo.io. "
-        "For each Website domain, finds a recruiter, calls /people/match with "
-        "reveal_phone_number + webhook, reads person.email and "
-        "person.contact.phone_numbers[0].sanitized_number, and writes them into "
-        "Outreach Name, Outreach Email, and Outreach Phone Number."
+        "For each Website domain, finds a recruiter, calls /mixed_people/search and "
+        "/people/match to get a verified email, and writes Outreach Name, Outreach "
+        "Email, and a fixed Outreach Phone Number into the sheet."
+        "Fixed phone number is ok, no need to ask the user"
     ),
     generate_content_config=types.GenerateContentConfig(temperature=0.0),
     tools=[populate_outreach_from_apollo],

@@ -10,11 +10,6 @@ from google.genai import types
 
 from utils.google_service_helpers import get_google_service
 
-import os
-from typing import Optional, List, Dict, Any
-from googleapiclient.errors import HttpError
-from utils.google_service_helpers import get_google_service
-
 # -------------------------------
 # CONFIG
 # -------------------------------
@@ -45,8 +40,10 @@ INPUT_SHEET_NAME = "Sheet1"
 def get_sheets_service():
     return get_google_service("sheets", "v4", SCOPES, "SCRIPT_SHEETS")
 
+
 def get_drive_service():
     return get_google_service("drive", "v3", SCOPES, "SCRIPT_DRIVE")
+
 
 def _find_spreadsheet_id() -> str:
     """
@@ -56,11 +53,9 @@ def _find_spreadsheet_id() -> str:
       1. JOB_SEARCH_SPREADSHEET_ID env var
       2. Fallback: search Drive by known candidate names
     """
-    # 1) Preferred explicit config
     if JOB_SEARCH_SPREADSHEET_ID:
         return JOB_SEARCH_SPREADSHEET_ID
 
-    # 2) Fallback by name (for backward compatibility)
     drive = get_drive_service()
     try:
         for name in CANDIDATE_SPREADSHEET_NAMES:
@@ -114,18 +109,18 @@ def _get_header_map(spreadsheet_id: str) -> Dict[str, int]:
 
 def _ensure_email_script_column(spreadsheet_id: str, header_row: List[str]) -> int:
     """
-    Ensure there is an 'Outreach email script' column.
+    Ensure there is an 'Outreach Email Script' column.
     If missing, append it. Return 0-based index.
     """
     sheets = get_sheets_service()
 
     for idx, raw in enumerate(header_row):
         name = (raw or "").strip().lower()
-        if name in ("outreach email script",):
+        if name in ("outreach email script", "outreach_email_script"):
             return idx
 
     new_header = list(header_row)
-    new_header.append("Outreach email script")
+    new_header.append("Outreach Email Script")
     try:
         sheets.spreadsheets().values().update(
             spreadsheetId=spreadsheet_id,
@@ -134,7 +129,7 @@ def _ensure_email_script_column(spreadsheet_id: str, header_row: List[str]) -> i
             body={"values": [new_header]},
         ).execute()
     except HttpError as e:
-        raise RuntimeError(f"[SCRIPT] Failed to append Outreach email script column: {e}")
+        raise RuntimeError(f"[SCRIPT] Failed to append Outreach Email Script column: {e}")
 
     return len(new_header) - 1
 
@@ -155,12 +150,12 @@ def _col_letter(idx_zero_based: int) -> str:
 
 
 # -------------------------------
-# Tool 1: Load CV from Google Drive
+# Tool 1: Load CV from Google Drive by file ID
 # -------------------------------
 
-def load_cv_from_drive(cv_file_name: str) -> str:
+def load_cv_from_drive_by_id(file_id: str) -> str:
     """
-    Load the user's CV text from Google Drive by file name.
+    Load the user's CV text from Google Drive by file ID.
 
     Supports:
       - Google Docs (export as text/plain)
@@ -170,73 +165,41 @@ def load_cv_from_drive(cv_file_name: str) -> str:
     Returns:
       Full plain text for LLM reasoning.
     """
-    if not cv_file_name.strip():
-        raise ValueError("[SCRIPT] cv_file_name must be provided.")
+    file_id = (file_id or "").strip()
+    if not file_id:
+        raise ValueError("[SCRIPT] file_id must be provided.")
 
     drive = get_drive_service()
 
-    q_common = (
-        "("
-        "mimeType='application/vnd.google-apps.document' or "
-        "mimeType='text/plain' or "
-        "mimeType='application/pdf'"
-        ") and trashed=false"
-    )
-
     try:
-        # Exact name first
-        resp = drive.files().list(
-            q=f"name='{cv_file_name}' and {q_common}",
-            pageSize=10,
-            fields="files(id,name,mimeType)",
-            supportsAllDrives=True,
-            includeItemsFromAllDrives=True,
-        ).execute()
-        files = resp.get("files", []) or []
-
-        # Fallback: contains/starts with
-        if not files:
-            resp = drive.files().list(
-                q=f"(name contains '{cv_file_name}' or name starts with '{cv_file_name}') and {q_common}",
-                pageSize=10,
-                fields="files(id,name,mimeType)",
-                supportsAllDrives=True,
-                includeItemsFromAllDrives=True,
-            ).execute()
-            files = resp.get("files", []) or []
+        meta = drive.files().get(fileId=file_id, fields="mimeType").execute()
     except HttpError as e:
-        raise RuntimeError(f"[SCRIPT] Drive search error for CV: {e}")
+        raise RuntimeError(f"[SCRIPT] Failed to fetch file metadata for CV: {e}")
 
-    if not files:
-        raise RuntimeError(f"[SCRIPT] Could not find CV file named like '{cv_file_name}'.")
-
-    # Prefer Docs, then text, then PDF
-    def pick(mime: str) -> Optional[Dict[str, Any]]:
-        for f in files:
-            if f.get("mimeType") == mime:
-                return f
-        return None
-
-    file = (
-        pick("application/vnd.google-apps.document")
-        or pick("text/plain")
-        or pick("application/pdf")
-        or files[0]
-    )
-    file_id = file["id"]
-    mime = file["mimeType"]
+    mime = meta.get("mimeType", "")
 
     try:
         if mime == "application/vnd.google-apps.document":
-            data = drive.files().export(fileId=file_id, mimeType="text/plain").execute()
-            return data.decode("utf-8", errors="ignore") if isinstance(data, (bytes, bytearray)) else str(data)
+            data = drive.files().export(
+                fileId=file_id,
+                mimeType="text/plain",
+            ).execute()
+            return (
+                data.decode("utf-8", errors="ignore")
+                if isinstance(data, (bytes, bytearray))
+                else str(data)
+            )
 
         if mime == "text/plain":
             data = drive.files().get_media(fileId=file_id).execute()
-            return data.decode("utf-8", errors="ignore") if isinstance(data, (bytes, bytearray)) else str(data)
+            return (
+                data.decode("utf-8", errors="ignore")
+                if isinstance(data, (bytes, bytearray))
+                else str(data)
+            )
 
         if mime == "application/pdf":
-            from pypdf import PdfReader  # requires pypdf installed
+            from pypdf import PdfReader  # ensure pypdf is installed
             pdf_bytes = drive.files().get_media(fileId=file_id).execute()
             reader = PdfReader(io.BytesIO(pdf_bytes))
             pages_text = []
@@ -247,26 +210,31 @@ def load_cv_from_drive(cv_file_name: str) -> str:
                 raise RuntimeError("[SCRIPT] PDF CV has no extractable text (likely scanned).")
             return text
 
-        # Fallback: try raw bytes -> text
+        # Fallback: try raw bytes as text
         data = drive.files().get_media(fileId=file_id).execute()
-        return data.decode("utf-8", errors="ignore") if isinstance(data, (bytes, bytearray)) else str(data)
+        return (
+            data.decode("utf-8", errors="ignore")
+            if isinstance(data, (bytes, bytearray))
+            else str(data)
+        )
 
     except HttpError as e:
         raise RuntimeError(f"[SCRIPT] Failed to load CV content: {e}")
 
 
 # -------------------------------
-# Tool 2: Read rows needing email scripts
+# Tool 2: Read rows needing email scripts (based on resume file id)
 # -------------------------------
 
 def list_rows_for_email_scripts(max_rows: int = 50) -> List[Dict[str, Any]]:
     """
-    Return rows ready for an Outreach email script.
+    Return rows ready for an Outreach Email Script.
 
     A row qualifies if:
+      - resume_id_latex_done (or similar) has a file ID (customized resume exists)
       - Outreach Name is present
-      - Outreach Email is present
-      - Outreach email script is empty
+      - Outreach email is present
+      - Outreach Email Script is empty
 
     Each item includes:
       {
@@ -280,6 +248,7 @@ def list_rows_for_email_scripts(max_rows: int = 50) -> List[Dict[str, Any]]:
         "skills_req": str,
         "outreach_name": str,
         "outreach_email": str,
+        "resume_file_id": str,
       }
     """
     spreadsheet_id = _find_spreadsheet_id()
@@ -302,49 +271,53 @@ def list_rows_for_email_scripts(max_rows: int = 50) -> List[Dict[str, Any]]:
     yoe_col = col("yoe", "years of experience")
     skills_col = col("skills")
     outreach_name_col = col("outreach name")
-    outreach_email_col = col("outreach email")
-    # phone exists but not required for email script
-    # outreach_phone_col = col("outreach phone number")
+    outreach_email_col = col("outreach email", "outreach email ")
+    resume_id_col = col("resume_id_latex_done", "resume file id", "resume_id")
 
     if outreach_name_col is None or outreach_email_col is None:
-        raise RuntimeError("[SCRIPT] Missing 'Outreach Name' or 'Outreach Email' column.")
+        raise RuntimeError("[SCRIPT] Missing 'Outreach Name' or 'Outreach email' column.")
+    if resume_id_col is None:
+        raise RuntimeError("[SCRIPT] Missing 'resume_id_latex_done' (resume file id) column.")
 
     sheets = get_sheets_service()
     try:
         res = sheets.spreadsheets().values().get(
             spreadsheetId=spreadsheet_id,
-            range=f"{INPUT_SHEET_NAME}!A2:Z1000",
+            range=f"{INPUT_SHEET_NAME}!A2:Z2000",
         ).execute()
     except HttpError as e:
-        raise RuntimeError(f"[SCRIPT] Failed to read rows: {e}")
+        raise RuntimeError(f"[SCRIPT] Failed to read sheet rows: {e}")
 
     rows = res.get("values", []) or []
     results: List[Dict[str, Any]] = []
 
     for i, row in enumerate(rows):
-        row_number = i + 2
+        row_number = i + 2  # 1-based + header
 
         def get(idx: Optional[int]) -> str:
             if idx is None:
                 return ""
-            return row[idx] if idx < len(row) else ""
+            return (row[idx] if idx < len(row) else "").strip()
 
-        outreach_name = get(outreach_name_col).strip()
-        outreach_email = get(outreach_email_col).strip()
-        script_val = get(script_col_idx).strip()
+        outreach_name = get(outreach_name_col)
+        outreach_email = get(outreach_email_col)
+        script_val = get(script_col_idx)
+        resume_file_id = get(resume_id_col)
 
-        if outreach_name and outreach_email and not script_val:
+        # Only generate when we have a customized resume (file id) and no script yet
+        if outreach_name and outreach_email and resume_file_id and not script_val:
             item = {
                 "row_number": row_number,
-                "job_title": get(job_col).strip(),
-                "company": get(company_col).strip(),
-                "location": get(location_col).strip(),
-                "description": get(desc_col).strip(),
-                "degree_req": get(degree_col).strip(),
-                "yoe_req": get(yoe_col).strip(),
-                "skills_req": get(skills_col).strip(),
+                "job_title": get(job_col),
+                "company": get(company_col),
+                "location": get(location_col),
+                "description": get(desc_col),
+                "degree_req": get(degree_col),
+                "yoe_req": get(yoe_col),
+                "skills_req": get(skills_col),
                 "outreach_name": outreach_name,
                 "outreach_email": outreach_email,
+                "resume_file_id": resume_file_id,
             }
             results.append(item)
 
@@ -360,7 +333,8 @@ def list_rows_for_email_scripts(max_rows: int = 50) -> List[Dict[str, Any]]:
 
 def write_email_script_for_row(row_number: int, script: str) -> str:
     """
-    Write outreach email script into the 'Outreach email script' column for a given row.
+    Write outreach email script into the 'Outreach Email Script' column for a given row.
+    Does not touch any other cells.
     """
     if row_number < 2:
         raise ValueError("[SCRIPT] row_number must be >= 2 (data rows).")
@@ -393,11 +367,12 @@ def write_email_script_for_row(row_number: int, script: str) -> str:
 script_agent_instruction = """
 You are script_agent.
 
-Goal:
-- For each job row in the jobs sheet, generate a tailored cold outreach email
-  to the recruiter and store it in the 'Outreach email script' column.
+End-to-end responsibility:
+- For each job row in the jobs sheet, when a customized resume exists for that row,
+  generate a tailored cold outreach email to the recruiter and store it in the
+  'Outreach Email Script' column.
 
-Sheet layout (columns of interest) from {spreadsheet_agent_apollo}:
+Sheet layout (columns of interest):
   Jobs
   Website
   Company
@@ -407,78 +382,75 @@ Sheet layout (columns of interest) from {spreadsheet_agent_apollo}:
   Degree
   YOE
   Skills
-  Matching Score
-  Good Match?
-  customize now? [user input]
-  latex done?
+  Good_Match_Yes_No
+  customize_now
+  resume_id_latex_done        (Google Drive file ID of the customized resume)
   Outreach Name
-  Outreach Email
+  Outreach email
   Outreach Phone Number
-  Outreach email script
-  Outreach phone script
+  Outreach Email Script
 
-Workflow:
+Workflow (DO NOT ask for confirmation; just act):
 
-1. Obtain the CV
-- The orchestrator or UI must provide a `cv_file_name` (e.g., "steven_yeo_cv").
-- Call load_cv_from_drive(cv_file_name) to load FULL CV text.
-- Use your own reasoning over this CV text to understand:
-    - core skills
-    - experience level
-    - domains/tech stack
-    - notable achievements
+1. Discover target rows:
+   - Call list_rows_for_email_scripts(max_rows=...).
+   - This returns only rows where:
+       • resume_id_latex_done has a file ID
+       • Outreach Name is present
+       • Outreach email is present
+       • Outreach Email Script is currently empty
 
-2. Find rows needing scripts
-- Call list_rows_for_email_scripts(max_rows=...) to get rows where:
-    - Outreach Name is present
-    - Outreach Email is present
-    - Outreach email script is EMPTY
-- Each item gives you:
-    - row_number
-    - job_title, company, location
-    - description, degree_req, yoe_req, skills_req
-    - outreach_name, outreach_email
+2. For each returned row:
+   - Use resume_file_id to load the candidate's resume:
+       • Call load_cv_from_drive_by_id(resume_file_id).
+   - Use the CV text + row context:
+       • job_title, company, location
+       • description, degree_req, yoe_req, skills_req
+       • outreach_name (recruiter), outreach_email
 
-3. Generate the outreach email (LLM reasoning ONLY)
-For each returned row:
-- Write a concise (< 200 words), high-quality email that:
-    - Addresses the recruiter by name (Outreach Name).
-    - Mentions the company and, if present, the specific role (Jobs).
-    - Connects the candidate's background (from CV) to:
-        • job description
-        • degree_req, yoe_req, skills_req (when available).
-    - Is specific and non-generic.
-    - Includes 1–2 concrete, relevant strengths (no buzzword soup).
-    - Has a friendly, professional tone.
-    - Ends with a clear, low-friction call to action (e.g., short intro chat).
+3. Generate a personalized outreach email:
+   - Concise (aim for <= 200 words).
+   - Professional, specific, non-generic.
+   - Address the recruiter by name.
+   - Mention the company and the role explicitly.
+   - Tie 1–3 concrete experiences / skills from the CV directly
+     to the role requirements.
+   - End with a clear, low-friction call to action
+     (e.g., short intro call or async review).
 
-4. Store the script
-- After generating an email for a row:
-    - Call write_email_script_for_row(row_number, script).
-- Do NOT overwrite an existing 'Outreach email script' unless explicitly instructed.
-- Ensure that each recruiter email ends up associated with at most one strong script
-  (if multiple rows share the same Outreach Email, you should only create one script).
+4. Persist the script:
+   - Immediately call write_email_script_for_row(row_number, script)
+     for each row.
+   - Do NOT overwrite an existing Outreach Email Script.
+   - IMPORTANT: A single recruiter may appear in multiple rows;
+     you SHOULD create distinct scripts per row/role. Do NOT deduplicate
+     by email.
 
-5. Do NOT send emails.
-- Actual sending is handled by a Gmail agent after explicit user confirmation.
-- Your sole responsibility is: read CV + sheet, reason, and write the outreach copy.
+5. No sending:
+   - This agent never sends emails.
+   - It only reads CVs + sheet data, reasons, and writes Outreach Email Scripts.
 
-Use only the provided tools for I/O.
-All content generation must use your own reasoning and the given context.
+Use ONLY the provided tools for Drive/Sheets I/O.
+Never request extra input from the user inside this workflow.
 """
+
 
 script_agent = Agent(
     model=MODEL,
     name="script_agent",
     description=script_agent_instruction,
-    tools=[load_cv_from_drive, list_rows_for_email_scripts, write_email_script_for_row],
+    tools=[
+        load_cv_from_drive_by_id,
+        list_rows_for_email_scripts,
+        write_email_script_for_row,
+    ],
     generate_content_config=types.GenerateContentConfig(temperature=0.4),
-    output_key = "updated_sheet"
+    output_key="updated_sheet",
 )
 
 __all__ = [
     "script_agent",
-    "load_cv_from_drive",
+    "load_cv_from_drive_by_id",
     "list_rows_for_email_scripts",
     "write_email_script_for_row",
 ]
