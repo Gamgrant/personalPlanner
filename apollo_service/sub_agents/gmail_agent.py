@@ -27,6 +27,15 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
 ]
 
+# Prefer explicit spreadsheet id from env (no hard-coded names)
+JOB_SEARCH_SPREADSHEET_ID = (os.environ.get("JOB_SEARCH_SPREADSHEET_ID") or "").strip()
+
+# Optional legacy names as a fallback if env is not set
+CANDIDATE_SPREADSHEET_NAMES = [
+    "Job_Search_Database",
+    "job_search_spreadsheet",
+]
+
 # -------------------------------------------------------------------
 # Service helpers
 # -------------------------------------------------------------------
@@ -45,10 +54,6 @@ def get_sheets_service() -> object:
 # -------------------------------------------------------------------
 
 def make_time_context(preferred_tz: Optional[str] = None) -> dict:
-    """
-    Return a time context dict for use in email copy if needed.
-    Delegates to utils.time_utils.get_time_context.
-    """
     ctx = get_time_context(preferred_tz)
     try:
         dt = datetime.fromisoformat(ctx["datetime"])
@@ -89,22 +94,26 @@ def _encode_message(msg: EmailMessage) -> Dict[str, str]:
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
     return {"raw": raw}
 
-# Keep your existing tools (list_labels, send_email, search_messages) if needed.
-# We'll add draft creation + sheet-driven outreach below.
-
 # -------------------------------------------------------------------
 # Spreadsheet helpers (Job_Search_Database)
 # -------------------------------------------------------------------
 
-CANDIDATE_SPREADSHEET_NAMES = [
-    "Job_Search_Database",
-    "job_search_spreadsheet",
-]
-
 def _find_jobs_spreadsheet_id() -> str:
+    """
+    Resolve the Job Search spreadsheet ID.
+
+    Priority:
+      1. JOB_SEARCH_SPREADSHEET_ID env var (recommended)
+      2. Fallback: search Drive by legacy names
+    """
+    # 1) Preferred: configured explicitly
+    if JOB_SEARCH_SPREADSHEET_ID:
+        return JOB_SEARCH_SPREADSHEET_ID
+
+    # 2) Fallback by name (for backwards compatibility)
     drive = get_drive_service()
-    for name in CANDIDATE_SPREADSHEET_NAMES:
-        try:
+    try:
+        for name in CANDIDATE_SPREADSHEET_NAMES:
             resp = drive.files().list(
                 q=(
                     "mimeType='application/vnd.google-apps.spreadsheet' "
@@ -115,15 +124,15 @@ def _find_jobs_spreadsheet_id() -> str:
                 supportsAllDrives=True,
                 includeItemsFromAllDrives=True,
             ).execute()
-        except HttpError as e:
-            raise RuntimeError(f"[GMAIL-OUTREACH] Drive search error: {e}")
-
-        files = resp.get("files", []) or []
-        if files:
-            return files[0]["id"]
+            files = resp.get("files", []) or []
+            if files:
+                return files[0]["id"]
+    except HttpError as e:
+        raise RuntimeError(f"[GMAIL-OUTREACH] Drive search error: {e}")
 
     raise RuntimeError(
-        "[GMAIL-OUTREACH] Could not find Job_Search_Database/job_search_spreadsheet in Drive."
+        "[GMAIL-OUTREACH] JOB_SEARCH_SPREADSHEET_ID is not set and no matching "
+        "Job_Search_Database/job_search_spreadsheet was found in Drive."
     )
 
 def _get_first_sheet_name(spreadsheet_id: str) -> str:

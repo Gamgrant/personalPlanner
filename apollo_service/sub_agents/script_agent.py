@@ -10,6 +10,15 @@ from google.genai import types
 
 from utils.google_service_helpers import get_google_service
 
+import os
+from typing import Optional, List, Dict, Any
+from googleapiclient.errors import HttpError
+from utils.google_service_helpers import get_google_service
+
+# -------------------------------
+# CONFIG
+# -------------------------------
+
 MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
 
 SCOPES = [
@@ -17,14 +26,17 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
 ]
 
+# Prefer explicit spreadsheet id from env (recommended)
+JOB_SEARCH_SPREADSHEET_ID = (os.environ.get("JOB_SEARCH_SPREADSHEET_ID") or "").strip()
+
+# Optional fallback names if env var is not set
 CANDIDATE_SPREADSHEET_NAMES = [
     "Job_Search_Database",
     "job_search_spreadsheet",
 ]
 
-# Update this if your actual sheet/tab name differs
+# Tab name that holds the jobs
 INPUT_SHEET_NAME = "Sheet1"
-
 
 # -------------------------------
 # Google helpers
@@ -33,15 +45,25 @@ INPUT_SHEET_NAME = "Sheet1"
 def get_sheets_service():
     return get_google_service("sheets", "v4", SCOPES, "SCRIPT_SHEETS")
 
-
 def get_drive_service():
     return get_google_service("drive", "v3", SCOPES, "SCRIPT_DRIVE")
 
-
 def _find_spreadsheet_id() -> str:
+    """
+    Resolve the Job Search spreadsheet ID.
+
+    Priority:
+      1. JOB_SEARCH_SPREADSHEET_ID env var
+      2. Fallback: search Drive by known candidate names
+    """
+    # 1) Preferred explicit config
+    if JOB_SEARCH_SPREADSHEET_ID:
+        return JOB_SEARCH_SPREADSHEET_ID
+
+    # 2) Fallback by name (for backward compatibility)
     drive = get_drive_service()
-    for name in CANDIDATE_SPREADSHEET_NAMES:
-        try:
+    try:
+        for name in CANDIDATE_SPREADSHEET_NAMES:
             resp = drive.files().list(
                 q=(
                     "mimeType='application/vnd.google-apps.spreadsheet' "
@@ -52,15 +74,15 @@ def _find_spreadsheet_id() -> str:
                 supportsAllDrives=True,
                 includeItemsFromAllDrives=True,
             ).execute()
-        except HttpError as e:
-            raise RuntimeError(f"[SCRIPT] Drive search error: {e}")
+            files = resp.get("files", []) or []
+            if files:
+                return files[0]["id"]
+    except HttpError as e:
+        raise RuntimeError(f"[SCRIPT] Drive search error: {e}")
 
-        files = resp.get("files", []) or []
-        if files:
-            return files[0]["id"]
     raise RuntimeError(
-        "[SCRIPT] Could not find Job_Search_Database. "
-        "Expected one of: Job_Search_Database, job_search_spreadsheet."
+        "[SCRIPT] JOB_SEARCH_SPREADSHEET_ID is not set and no matching "
+        "Job_Search_Database/job_search_spreadsheet was found in Drive."
     )
 
 

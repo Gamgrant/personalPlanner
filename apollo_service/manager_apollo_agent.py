@@ -97,3 +97,5 @@ root_apollo_agent = Agent(
     sub_agents=[apollo_pipeline],
     generate_content_config=types.GenerateContentConfig(temperature=0.3),
 )
+
+root_agent = root_apollo_agent
