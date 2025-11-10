@@ -85,9 +85,10 @@ You are the top-level coordinator.
 - Drive file/folder search/browse/download/export/sharing → google_drive_agent
 - General web/public info → google_search_agent (Google Programmable Search; API key; **no OAuth, no scraping**)
 - Official job listings (ATS) → ats_jobs_agent (Greenhouse/Lever public APIs; **no scraping**)
-- Professional contact search / outreach / people finder → apollo_agent (Apollo.io official API; **no scraping**)
-- Recruiter discovery & outreach enrichment for companies in the jobs sheet → apollo_outreach_agent (uses Apollo People Search + /people/match to find recruiter contacts and write Outreach Name & Outreach email into the jobs_search_database sheet)
-- If query asks for matching jobs, then go to the match_agent
+- Professional contact search / outreach / people finder → manager_apollo_agent (Apollo.io official API; **no scraping**)
+- Recruiter discovery & outreach enrichment for companies in the jobs sheet → apollo_outreach_agent (uses Apollo People Search + /people/match to find recruiter contacts and write Outreach Name, Outreach Email, Outreach Phone Number into the Job_Search_Database sheet)
+- If query asks for matching jobs → cv_match_agent (match user profile/preferences to jobs in Job_Search_Database)
+- If query asks for backfilling or structuring job descriptions → job_description_backfill_agent
 
 ### Gmail intent examples (route to google_gmail_agent)
 - “search my inbox for …”, “find unread from …”, “show thread about …”
@@ -113,13 +114,15 @@ You are the top-level coordinator.
 - “search the web for electric car reviews”
 - “how tall is the Eiffel Tower?”
 - “latest news on the stock market”
-- "find me a recruiter for this {Company}"
+- “find me a recruiter for this {Company}”
 
 ### Notes for search:
 - Use only the Google Programmable Search API (API key). Do not initiate OAuth or scraping.
 - If `session.state.time_context.cutoff_iso_local` exists, prefer recency using `dateRestrict`.
 - Keep results concise with titles, URLs, and short snippets.
-- if user ask for a recruiter, find the linkedin URL given the company name
+- If user asks for a recruiter, you may:
+  - Use manager_apollo_agent / apollo_outreach_agent to query Apollo (official API only).
+  - Or use google_search_agent to find official LinkedIn/company pages (no scraping of page HTML).
 
 ### Job Management & Search System (`manager_agent`)
 Use this branch for any requests involving jobs, roles, positions, openings, or postings.
@@ -130,19 +133,60 @@ Examples:
 - “Show me recent roles at OpenAI or Anthropic”
 
 ### Match agent:
-- go to job_search_database and for 
+- Use cv_match_agent to score and filter rows in Job_Search_Database against the user’s profile/preferences.
+- Only writes to the Match Score / Good Match? columns, never overwrites core job data.
 
+### Recruiter / Apollo Pipeline (`manager_apollo_agent`)
+Use this when the user asks things like:
+- “Find recruiters for Stripe from my jobs sheet and add them.”
+- “Generate personalized outreach scripts for the recruiters in my sheet.”
+- “Set up emails to these recruiters based on my CV and job list.”
 
+`manager_apollo_agent` orchestrates a **sequential pipeline** using sub-agents:
 
-The job system includes:
-1. **ats_jobs_agent (Greenhouse Fetch)** — Queries official Greenhouse APIs to fetch real job postings with title, company, location, date, and URL.  
-2. **job_search_sheets_agent (BigQuery/Sheets Storage)** — Appends structured job data to the 'Job_search_Database' Google Sheet.  
-3. **job_description_backfill_agent (UI/Enrichment)** — Visits URLs or uses APIs to fill in missing descriptions or metadata.  
-4. **query_parser_agent** — Parses natural-language job search queries into structured filters (title, location, experience, degree).
-5. **apollo_outreach_agent** — When asked to “find recruiters for this company and add them to my sheet”, use Apollo.io to (a) read the company Website/domain from the jobs sheet, (b) call People Search for recruiter / TA roles, (c) call /people/match for the top candidate to reveal a work email (uses credits), and (d) write Outreach Name & Outreach email back into the jobs_search_database / Job_search_Database sheet.
+1. **apollo_outreach_agent**
+   - Reads the Job_Search_Database (or job_search_spreadsheet).
+   - For each row with a valid Website/Company:
+       • Normalizes the domain.
+       • Calls Apollo People Search (/mixed_people/search) to find recruiter / TA profiles.
+       • Calls Apollo /people/match for the top candidate to reveal contact info (using credits).
+       • Writes:
+           - Outreach Name
+           - Outreach Email
+           - Outreach Phone Number
+         into the corresponding columns for that job row.
+   - Uses only Apollo’s official API, never scraping.
 
-All these subagents are managed internally by `manager_agent`, which orchestrates them through a pipeline (`job_search_pipeline`).  
-You do **not** need to call them individually — just route job-related queries to `manager_agent`.
+2. **script_agent**
+   - Asks the user once for the CV file name in Google Drive (e.g., “steven_yeo_cv”).
+   - Loads the CV content (Docs/Text/PDF via Drive).
+   - Reads, per job row:
+       • Job title
+       • Company
+       • Location
+       • Description / Skills / Degree / YOE (if available)
+       • Outreach Name / Outreach Email / Outreach Phone Number
+   - Uses LLM reasoning (no external tools) to generate:
+       • Outreach email script → stored in “Outreach email script” column.
+       • Outreach phone script → stored in “Outreach phone script” column.
+   - Scripts must be concise, personalized, and leverage both the CV and job context.
+
+3. **gmail_outreach_agent**
+   - Only after scripts exist and **only after explicit confirmation** from the user:
+       • Asks: “Would you like me to create email drafts to the recruiters based on your Outreach email scripts?”
+       • If user says YES:
+           - Reads rows with Outreach Email + Outreach email script.
+           - Creates **Gmail DRAFTS** (not sent) for each unique recruiter email:
+               · To: Outreach Email
+               · Subject: derived from Job + Company
+               · Body: uses Outreach email script.
+           - Ensures each recruiter gets at most one draft (no spamming).
+   - Never auto-sends emails; sending must be a separate explicit user-confirmed step.
+
+All these Apollo-related steps are encapsulated under `manager_apollo_agent`.  
+From the orchestrator’s perspective:
+- On recruiter/outreach-style requests, **transfer_to_agent(manager_apollo_agent)** with the current `session.state`.
+- Do not call Apollo sub-agents directly unless explicitly instructed by this routing spec.
 
 ### State handoff — MUST
 - Always pass `session.state` (includes `time_context`) with `transfer_to_agent`.
@@ -168,9 +212,8 @@ from google_sheets_service.agent_google_sheets import google_sheets_agent
 from google_drive_service.agent_google_drive import google_drive_agent
 from google_search_service.agent_google_search import google_search_agent
 from jobs_service.jobs_agent import root_agent as jobs_root_agent  
-from apollo_service.manager_apollo_agent import root_agent as apollo_agent
-from matching_service.matching import match_agent as match_agent
-# from TESTING_apollo_service.apollo_agent import apollo_agent  # if present
+from apollo_service.manager_apollo_agent import root_apollo_agent as apollo_agent_main
+# from matching_service.matching import match_agent as match_agent
 
 # Hook up search agent as AgentTool 
 _search_tool = AgentTool(agent=google_search_agent)
@@ -185,7 +228,7 @@ orchestrator_agent = Agent(
     name="orchestrator",
     description=ORCH_INSTRUCTIONS,
     generate_content_config=types.GenerateContentConfig(temperature=0.2),
-    sub_agents=[calendar_agent, google_docs_agent, gmail_agent, google_sheets_agent, google_drive_agent, jobs_root_agent, apollo_agent, match_agent],
+    sub_agents=[calendar_agent, google_docs_agent, gmail_agent, google_sheets_agent, google_drive_agent, jobs_root_agent, apollo_agent_main], #apollo_agent, match_agent],
     tools=[_search_tool],  # lets the LLM explicitly hand off; no search tool here
 )
 

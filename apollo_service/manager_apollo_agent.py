@@ -6,9 +6,9 @@ import re
 
 
 from utils.google_service_helpers import get_google_service
-from sub_agents.apollo_agent import apollo_outreach_agent
-from sub_agents.gmail_agent import google_gmail_agent
-from sub_agents.script_agent import script_agent
+from .sub_agents.apollo_agent import apollo_outreach_agent
+from .sub_agents.gmail_agent import google_gmail_agent
+from .sub_agents.script_agent import script_agent
 MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
 
 manager_apollo_agent_instruction = """
@@ -78,25 +78,22 @@ General rules:
 apollo_pipeline = SequentialAgent(
     name="apollo_pipeline",
     description=manager_apollo_agent_instruction,
-    # No custom tools: let the LLM route to sub-agents using its instructions
-    tools=[],
-    sub_agent=[
+    sub_agents=[
         apollo_outreach_agent,
         script_agent,
         google_gmail_agent,
-    ],
-    generate_content_config=types.GenerateContentConfig(temperature=0.2),
+    ]
 )
 
-root_agent = Agent(
+root_apollo_agent = Agent(
     model=MODEL,
-    name="manager_agent",
+    name="apollo_manager_agent",
     description=(
         "Root orchestrator agent for managing apollo pipelines. "
         "It coordinates the apollo pipeline, which uses LLMs to interpret user intent, "
         "fetch recruiter info, store it into spreadsheet, draft a script for outrech, and send it through gmail "
         "to produce cold outreach agent capability"
     ),
-    sub_agent=[apollo_pipeline],
+    sub_agents=[apollo_pipeline],
     generate_content_config=types.GenerateContentConfig(temperature=0.3),
 )

@@ -15,7 +15,7 @@ from google.genai import types
 
 MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
 
-APOLLO_API_KEY = ""
+APOLLO_API_KEY = os.environ.get("APOLLO_API_KEY")
 if not APOLLO_API_KEY:
     # allow override for local quick testing, but don't hardcode in prod
     APOLLO_API_KEY = os.environ.get("APOLLO_API_KEY_HARDCODE", "")

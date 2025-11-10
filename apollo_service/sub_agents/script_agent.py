@@ -375,7 +375,7 @@ Goal:
 - For each job row in the jobs sheet, generate a tailored cold outreach email
   to the recruiter and store it in the 'Outreach email script' column.
 
-Sheet layout (columns of interest):
+Sheet layout (columns of interest) from {spreadsheet_agent_apollo}:
   Jobs
   Website
   Company
@@ -451,6 +451,7 @@ script_agent = Agent(
     description=script_agent_instruction,
     tools=[load_cv_from_drive, list_rows_for_email_scripts, write_email_script_for_row],
     generate_content_config=types.GenerateContentConfig(temperature=0.4),
+    output_key = "updated_sheet"
 )
 
 __all__ = [

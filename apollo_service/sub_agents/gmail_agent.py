@@ -343,6 +343,8 @@ def search_messages(query: str, max_results: Optional[int] = None) -> List[str]:
 gmail_outreach_instruction = """
 You are the gmail_outreach_agent.
 
+pass on the result from {updated_sheet} on the columns for the scripts
+
 High-level behavior:
 1. First, confirm with the user:
    "Would you like me to create email drafts to the recruiters based on your Outreach email scripts?"
