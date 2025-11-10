@@ -167,6 +167,8 @@ def write_resume_tex(updated_content: str) -> str:
     MAIN_TEX_PATH.write_text(updated_content, encoding="utf-8")
     return f"Wrote updated resume to {MAIN_TEX_PATH}"
 
+PDF_BASENAME = "resume_Grant_Ovsepyan"
+
 
 def build_resume_pdf() -> str:
     """
@@ -202,6 +204,8 @@ def build_resume_pdf() -> str:
                 "-halt-on-error",
                 "-output-directory",
                 str(BUILD_DIR),
+                "-jobname",
+                PDF_BASENAME,
                 "main.tex",
             ],
             cwd=str(RESUME_DIR),
@@ -223,7 +227,7 @@ def build_resume_pdf() -> str:
         )
         raise ValueError(msg)
 
-    pdf_path = BUILD_DIR / "main.pdf"
+    pdf_path = BUILD_DIR / f"{PDF_BASENAME}.pdf"
     if not pdf_path.exists():
         raise ValueError(f"LaTeX reported success but {pdf_path} was not found.")
 
@@ -248,7 +252,7 @@ def upload_built_resume_to_drive() -> dict:
     - build_resume_pdf() should have been called beforehand so that
       resume_customization/build/main.pdf exists.
     """
-    pdf_path = BUILD_DIR / "main.pdf"
+    pdf_path = BUILD_DIR / f"{PDF_BASENAME}.pdf"
     if not pdf_path.exists():
         raise ValueError(
             "Built resume PDF not found at "
@@ -265,7 +269,7 @@ def upload_built_resume_to_drive() -> dict:
     drive = get_drive_service()
     try:
         file_metadata = {
-            "name": pdf_path.name,
+            "name": f"{PDF_BASENAME}.pdf",
             "parents": [folder_id],
         }
         with open(pdf_path, "rb") as fh:
@@ -302,7 +306,7 @@ The orchestrator will give you:
 Your job:
 1. Clean build artifacts.
 2. Carefully edit `main.tex` in the **Experience**, **Projects**, and/or **Skills** sections.
-3. Rebuild the PDF using the `build_resume_pdf()` tool (which runs a LaTeX engine).
+3. Rebuild the PDF using the `build_resume_pdf()` tool (which runs a LaTeX engine and writes `resume_Grant_Ovsepyan.pdf`).
 4. Upload the generated PDF to Google Drive using `upload_built_resume_to_drive()`.
 5. Return a concise summary of what you changed, including the uploaded Drive file ID.
 
@@ -310,8 +314,10 @@ You have the following tools:
 - `cleanup_resume_build()` – remove `resume_customization/__pycache__` and `resume_customization/build`.
 - `read_resume_tex()` – read the full contents of `resume_customization/main.tex`.
 - `write_resume_tex(updated_content)` – overwrite `resume_customization/main.tex` with your edited version.
-- `build_resume_pdf()` – run the LaTeX engine from the project root and rebuild `resume_customization/build/main.pdf`.
-- `upload_built_resume_to_drive()` – upload `resume_customization/build/main.pdf` to the Drive folder whose ID is in
+- `build_resume_pdf()` – run the LaTeX engine from the project root and rebuild
+  `resume_customization/build/resume_Grant_Ovsepyan.pdf` using the configured LaTeX engine.
+- `upload_built_resume_to_drive()` – upload the built PDF
+  (`resume_customization/build/resume_Grant_Ovsepyan.pdf`) to the Drive folder whose ID is in
   the RESUME_CUSTOMIZATION_FOLDER_ID environment variable, returning the Drive file id.
 
 Rules for editing:

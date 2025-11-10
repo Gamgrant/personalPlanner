@@ -28,6 +28,7 @@ RESUME_SCORE_PROMPT_TEMPLATE = (
 )
 
 # ---- Prompt template for customizing a resume ----
+# ---- Prompt template for customizing a resume ----
 CUSTOMIZE_RESUME_PROMPT_TEMPLATE = (
     "Task: Customize my resume for this job.\n\n"
     "Job title: {job_title}\n\n"
@@ -36,7 +37,9 @@ CUSTOMIZE_RESUME_PROMPT_TEMPLATE = (
     "What is missing:\n"
     "{missing}\n\n"
     "Please update the LaTeX resume, rebuild the PDF, upload it to the configured Drive folder,\n"
-    "and return ONLY a single JSON object with:\n"
+    "and ensure the final PDF in Google Drive is named exactly 'resume_Grant_Ovsepyan.pdf' "
+    "(do NOT leave it as 'main.pdf'). If a file with that name already exists, overwrite it.\n\n"
+    "Return ONLY a single JSON object with:\n"
     "status, job_title, company, drive_file_id, summary_of_changes."
 )
 

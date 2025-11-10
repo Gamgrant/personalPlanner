@@ -199,16 +199,25 @@ def load_cv_from_drive_by_id(file_id: str) -> str:
             )
 
         if mime == "application/pdf":
-            from pypdf import PdfReader  # ensure pypdf is installed
-            pdf_bytes = drive.files().get_media(fileId=file_id).execute()
-            reader = PdfReader(io.BytesIO(pdf_bytes))
-            pages_text = []
-            for page in reader.pages:
-                pages_text.append(page.extract_text() or "")
-            text = "\n".join(pages_text).strip()
-            if not text:
-                raise RuntimeError("[SCRIPT] PDF CV has no extractable text (likely scanned).")
-            return text
+            try:
+                # Try to use pypdf if available
+                from pypdf import PdfReader  # may not be installed in some environments
+
+                pdf_bytes = drive.files().get_media(fileId=file_id).execute()
+                reader = PdfReader(io.BytesIO(pdf_bytes))
+                pages_text = []
+                for page in reader.pages:
+                    pages_text.append(page.extract_text() or "")
+                text = "\n".join(pages_text).strip()
+                if text:
+                    return text
+            except Exception:
+                # Either pypdf is missing or parsing failed; just fall through
+                pass
+
+            # Fallback: no text extracted – return empty text.
+            # The email script generator will still work using sheet context only.
+            return ""
 
         # Fallback: try raw bytes as text
         data = drive.files().get_media(fileId=file_id).execute()

@@ -157,7 +157,7 @@ Routing:
 
 `resume_customization_agent` will:
 - Edit only the Experience, Projects, and Skills sections in `resume_customization/main.tex`,
-- rebuild `resume_customization/build/main.pdf`, and
+- rebuild `resume_customization/build/resume_Grant_Ovsepyan.pdf`, and
 - upload the PDF to the Drive folder in `RESUME_CUSTOMIZATION_FOLDER_ID`.
 
 Final answer format from `resume_customization_agent`:
@@ -221,35 +221,49 @@ If the user asks to “mark”, “flag”, “tag”, or “label” jobs as go
 Use this when the user asks things like:
 - “Find recruiters for Stripe from my jobs sheet and add them.”
 - “Generate personalized outreach scripts for the recruiters in my sheet.”
-- “Set up emails to these recruiters based on my CV and job list.”
+- “Set up emails to these recruiters based on my customized resumes and job list.”
 
-`manager_apollo_agent` orchestrates a sequential pipeline:
+`manager_apollo_agent` orchestrates a sequential, fully automatic pipeline:
+`apollo_outreach_agent` → `script_agent` → `gmail_outreach_agent`.
 
 1. **apollo_outreach_agent**
-   - Reads the Job_Search_Database.
-   - For each row with a valid Website/Company:
-       • Normalizes the domain.
-       • Uses Apollo People Search (/mixed_people/search).
-       • Uses Apollo /people/match to reveal contact info (credits).
-       • Writes Outreach Name, Outreach Email, Outreach Phone Number into the sheet.
-   - Uses only Apollo’s official API (no scraping).
+   - Reads the `Job_Search_Database` sheet.
+   - Respects the row scope described in the user’s prompt (e.g., “only these specific sheet rows”).
+   - For each in-scope row with:
+       • a valid Website/Company, and  
+       • a non-empty `resume_id_latex_done` (customized resume file id),
+     it:
+       • Normalizes the domain from Website.  
+       • Uses Apollo People Search (`/mixed_people/search`).  
+       • Uses Apollo `/people/match` to retrieve verified recruiter emails (no scraping).  
+       • Writes **Outreach Name**, **Outreach email**, and **Outreach Phone Number** into the sheet.  
+   - If a recruiter phone number cannot be found, it may fall back to a fixed default phone number as configured in the Apollo tools.
+   - Does **not** touch rows outside the scope described in the user’s prompt.
 
 2. **script_agent**
-   - Asks once for the CV file name in Google Drive.
-   - Loads the CV (Docs/Text/PDF via Drive).
-   - For each job row, reads:
-       • Job title, Company, Location
-       • Description / Skills / Degree / YOE (if available)
-       • Outreach Name / Outreach Email / Outreach Phone Number
-   - Generates:
-       • Outreach email script → “Outreach email script” column.
-       • Outreach phone script → “Outreach phone script” column.
+   - Does **not** ask the user for any additional input.
+   - For each in-scope row where:
+       • `resume_id_latex_done` is non-empty,  
+       • Outreach Name is present,  
+       • Outreach email is present, and  
+       • `Outreach Email Script` is currently empty,
+     it:
+       • Loads the resume using `resume_id_latex_done` (via Drive).  
+       • Uses the CV text plus job context (Job title, Company, Location, Description, Degree, YOE, Skills)  
+         to generate a tailored **Outreach Email Script** for that specific recruiter and role.  
+       • Writes the result only into the **Outreach Email Script** column for that row.  
+   - Never overwrites an existing Outreach Email Script.
 
 3. **gmail_outreach_agent**
-   - Only after scripts exist AND explicit user confirmation:
-       • Creates Gmail DRAFTS (not sent) to recruiters using Outreach email script.
-       • Ensures at most one draft per recruiter email (no spam).
-   - Never auto-sends; sending is a separate explicit step.
+   - After scripts exist, and **without asking the user for confirmation**, it:
+       • Creates Gmail **DRAFTS** (never sends) to recruiters using the `Outreach Email Script` body.  
+       • Uses the job title + company to generate a clear, non-spammy subject line.  
+       • Attaches the customized resume file referenced by `resume_id_latex_done`.  
+       • Enforces at most **one draft per unique recruiter email address** in a single run (no duplicate drafts).  
+   - Never modifies the spreadsheet and never sends emails automatically; it only creates drafts.
+
+When user intent is to “run the recruiter outreach pipeline” (find recruiters, fill outreach columns, write scripts, and create drafts based on the jobs sheet), you should:
+- **transfer_to_agent(manager_apollo_agent)** with a message that clearly specifies which sheet rows are in scope and any special constraints (e.g., “only rows that have a non-empty `resume_id_latex_done`”).
 
 ### Voice Outreach & Live Calling (`elevenlabs_calling_agent`)
 Use this when the user asks things like:

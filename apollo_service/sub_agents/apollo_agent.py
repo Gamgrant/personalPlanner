@@ -268,25 +268,41 @@ def match_person_for_contact(
 
 def populate_outreach_from_apollo(per_company_candidates: int = 5) -> str:
     """
-    For each row:
-      - read Website → domain
-      - search recruiters
-      - pick top candidate
-      - /people/match (for email)
-      - fill:
-          Outreach Name
-          Outreach Email
-          Outreach Phone Number (always set to HARDCODED_OUTREACH_PHONE)
+    For each row in the jobs sheet:
+
+      - ONLY consider rows where `resume_id_latex_done` (or similar) is non-empty.
+      - Read Website → domain.
+      - Search recruiters via Apollo.
+      - Pick top candidate.
+      - Call /people/match to get a verified email.
+      - Fill (for qualifying rows only):
+          * Outreach Name
+          * Outreach Email
+          * Outreach Phone Number (fixed HARDCODED_OUTREACH_PHONE)
+
+    Rules:
+      - Do NOT overwrite an existing Outreach Name / Outreach Email / Outreach Phone Number.
+      - Only write Outreach fields for rows where a customized resume exists
+        (resume_id_latex_done is non-empty).
     """
     spreadsheet_id = _find_spreadsheet_id()
     sheets = get_sheets_service()
     header_map = _get_header_map(spreadsheet_id)
 
+    # Helper to safely get the first existing column index among candidates.
+    def _first_idx(*names: str) -> Optional[int]:
+        for n in names:
+            idx = header_map.get(n)
+            if idx is not None:
+                return idx
+        return None
+
     website_col_idx = header_map.get("website")
     outreach_name_col_idx = header_map.get("outreach name")
-    outreach_email_col_idx = header_map.get("outreach email") or header_map.get("outreach_email")
-    outreach_phone_col_idx = None
+    outreach_email_col_idx = _first_idx("outreach email", "outreach_email")
+    resume_id_col_idx = _first_idx("resume_id_latex_done", "resume id", "resume_id")
 
+    outreach_phone_col_idx = None
     for name, idx in header_map.items():
         if name in (
             "outreach phone number",
@@ -301,6 +317,8 @@ def populate_outreach_from_apollo(per_company_candidates: int = 5) -> str:
         raise ValueError("No 'Website' column header found in sheet.")
     if outreach_name_col_idx is None or outreach_email_col_idx is None:
         raise ValueError("Missing 'Outreach Name' or 'Outreach email' column header in sheet.")
+    if resume_id_col_idx is None:
+        raise ValueError("Missing 'resume_id_latex_done' / resume id column header in sheet.")
 
     try:
         res = sheets.spreadsheets().values().get(
@@ -315,11 +333,19 @@ def populate_outreach_from_apollo(per_company_candidates: int = 5) -> str:
         return "No job rows found under headers."
 
     updates: List[Dict[str, Any]] = []
-    start_row_index = 2
+    start_row_index = 2  # data starts on row 2 (row 1 = header)
 
     for i, row in enumerate(rows):
         sheet_row = start_row_index + i
 
+        # --- Only process rows with a non-empty resume_id_latex_done ---
+        if resume_id_col_idx is None or resume_id_col_idx >= len(row):
+            continue
+        resume_val = (row[resume_id_col_idx] or "").strip()
+        if not resume_val:
+            continue
+
+        # --- Website → domain ---
         website = row[website_col_idx] if website_col_idx < len(row) else ""
         domain = _normalize_domain(website)
         if not domain:
@@ -351,40 +377,60 @@ def populate_outreach_from_apollo(per_company_candidates: int = 5) -> str:
             linkedin_url=linkedin or None,
         )
 
-        # Use fixed phone number for all rows (if column exists)
+        # Fixed phone number (only used if the column exists)
         phone = HARDCODED_OUTREACH_PHONE if outreach_phone_col_idx is not None else None
 
+        # If we somehow got nothing at all, skip
         if not (full_name or email or phone):
             continue
 
-        # Outreach Name
-        if full_name:
+        # --- Outreach Name (only if currently empty) ---
+        current_name = ""
+        if outreach_name_col_idx < len(row):
+            current_name = (row[outreach_name_col_idx] or "").strip()
+
+        if full_name and not current_name:
             name_col_letter = _col_letter(outreach_name_col_idx)
-            updates.append({
-                "range": f"{INPUT_SHEET_NAME}!{name_col_letter}{sheet_row}",
-                "values": [[full_name]],
-            })
+            updates.append(
+                {
+                    "range": f"{INPUT_SHEET_NAME}!{name_col_letter}{sheet_row}",
+                    "values": [[full_name]],
+                }
+            )
 
-        # Outreach Email
-        if email:
+        # --- Outreach Email (only if currently empty) ---
+        current_email = ""
+        if outreach_email_col_idx < len(row):
+            current_email = (row[outreach_email_col_idx] or "").strip()
+
+        if email and not current_email:
             email_col_letter = _col_letter(outreach_email_col_idx)
-            updates.append({
-                "range": f"{INPUT_SHEET_NAME}!{email_col_letter}{sheet_row}",
-                "values": [[email]],
-            })
+            updates.append(
+                {
+                    "range": f"{INPUT_SHEET_NAME}!{email_col_letter}{sheet_row}",
+                    "values": [[email]],
+                }
+            )
 
-        # Outreach Phone Number (fixed)
+        # --- Outreach Phone Number (fixed, only if currently empty) ---
         if outreach_phone_col_idx is not None and phone:
-            phone_col_letter = _col_letter(outreach_phone_col_idx)
-            updates.append({
-                "range": f"{INPUT_SHEET_NAME}!{phone_col_letter}{sheet_row}",
-                "values": [[phone]],
-            })
+            current_phone = ""
+            if outreach_phone_col_idx < len(row):
+                current_phone = (row[outreach_phone_col_idx] or "").strip()
+
+            if not current_phone:
+                phone_col_letter = _col_letter(outreach_phone_col_idx)
+                updates.append(
+                    {
+                        "range": f"{INPUT_SHEET_NAME}!{phone_col_letter}{sheet_row}",
+                        "values": [[phone]],
+                    }
+                )
 
     if not updates:
         return (
             "No outreach contacts found or written. "
-            "Check Website values, Apollo config, and column headers."
+            "Check Website values, Apollo config, resume_id_latex_done, and column headers."
         )
 
     try:
@@ -405,7 +451,8 @@ def populate_outreach_from_apollo(per_company_candidates: int = 5) -> str:
 
     return (
         f"Updated Outreach Name, Outreach email, and Outreach Phone Number "
-        f"for {len(touched_rows)} row(s) using Apollo (phone is fixed to {HARDCODED_OUTREACH_PHONE})."
+        f"for {len(touched_rows)} row(s) using Apollo "
+        f"(phone is fixed to {HARDCODED_OUTREACH_PHONE} when blank)."
     )
 
 # ---------------------------------------------------
