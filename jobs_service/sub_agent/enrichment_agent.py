@@ -301,6 +301,18 @@ def _fetch_description_from_url(url: str) -> str:
 # -------------------------------
 # Tool 1: backfill FULL descriptions into F
 # -------------------------------
+def enrich_job_search_database(
+    max_rows: Optional[int] = None,
+    overwrite: bool = False,
+) -> str:
+    """
+    Deterministic wrapper: always
+      1) backfill descriptions in F
+      2) extract Degree/YOE/Skills into G/H/I
+    """
+    msg1 = backfill_job_descriptions(max_rows=max_rows)
+    msg2 = extract_structured_fields(max_rows=max_rows, overwrite=overwrite)
+    return f"{msg1}\n\n{msg2}"
 
 def backfill_job_descriptions(
     max_rows: Optional[int] = None,
@@ -502,7 +514,7 @@ For each row where Description (F) is present:
     - Normalize to short, clean skill tokens only.
     - Do NOT include long phrases or sentences. No extra wording.
     - Make sure that you give me the complete "preferred" and "desired" set of skills
-    - Capture all the important skills too, not just "Communications"
+    - Capture all the important skills too, not just "Communications", focus on variety of techincal skills from the domains, there are usually a decent number of them, not just a few words it should be a short paragrpah sized, but again as a condensed list.
 
   (b) Years of Experience (YOE)
     - Merge required and preferred experience into a single concise representation.
@@ -519,7 +531,7 @@ For each row where Description (F) is present:
 - Write the inferred values into:
     • G: Degree
     • H: YOE
-    • I: Skills (comma-separated, condensed list)
+    • I: Skills (comma-separated, condensed list - short paragraph sized around 4 sentences.)
 
 3. Output format for extract_structured_fields
 - When extract_structured_fields is called, its return value must ONLY contain lines in this exact textual shape
@@ -536,9 +548,9 @@ description_agent = Agent(
     model=MODEL,
     name="job_description_backfill_agent",
     description=backfill_agent_instruction,
-    tools=[backfill_job_descriptions, extract_structured_fields],
+    tools=[enrich_job_search_database],   # <-- single tool that does both
     generate_content_config=types.GenerateContentConfig(temperature=0),
-    output_key = "matching_data"
+    output_key="matching_data",
 )
 
 __all__ = ["description_agent", "backfill_job_descriptions", "extract_structured_fields"]

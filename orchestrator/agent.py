@@ -83,7 +83,8 @@ Always ground answers and actions in the current time and timezone provided abov
 - Docs/notes/meeting-doc requests → google_docs_agent
 - Email/Gmail requests → google_gmail_agent
 - Sheets data/operations → google_sheets_agent
-- Drive file/folder search/browse/download/export/sharing → google_drive_agent
+- Drive file/folder search/browse/download/export/sharing, and any request to
+  analyze or score files (e.g., resumes) stored in Drive → google_drive_agent
 - General web/public info → google_search_agent (Google Programmable Search; API key; **no OAuth, no scraping**)
 - Official job listings (ATS) → ats_jobs_agent (Greenhouse/Lever public APIs; **no scraping**)
 - Professional contact search / outreach / people finder → manager_apollo_agent (Apollo.io official API; **no scraping**)
@@ -142,8 +143,46 @@ Examples:
 - “Show me recent roles at OpenAI or Anthropic”
 
 ### Match agent:
-- Use cv_match_agent to score and filter rows in Job_Search_Database against the user’s profile/preferences.
-- Only writes to the Match Score / Good Match? columns, never overwrites core job data.
+
+- Use matching_agent when the user wants to **identify or tag a subset of jobs from Job_Search_Database based on structured fields** such as Years of Experience and Location.
+- Typical intents:
+  - “Mark all jobs that are 5 years of experience in San Francisco as good matches.”
+  - “Find jobs that match 3 years in New York (including remote-eligible ones).”
+  - “Tag rows that match 5 years / San Francisco in the Good_Match_Yes_No column.”
+
+matching_agent:
+- Reads the job spreadsheet whose ID is stored in the JOB_SEARCH_SPREADSHEET_ID environment variable.
+- Works on the Job_Search_Database sheet/tab.
+- Normalizes:
+  - `Location` (lowercase, trims, extracts city, treats ‘remote’ specially).
+  - `YOE` (e.g., “5+ years”, “5 Years” → “5 years”).
+- Expands rows where Location is “remote” so they count toward all cities.
+- Finds rows matching a target `(YOE_norm, Location_norm)` pair (e.g., `("5 years", "san francisco")`).
+- For those matching original rows, writes `"yes"` into the `Good_Match_Yes_No` column.
+- Does **not** modify any other job fields (Title, Company, URL, etc.).
+
+If the user asks to “mark”, “flag”, “tag”, or “label” jobs as good matches based on YOE + location,
+**transfer_to_agent(matching_agent)** with the current `session.state` and let it run its matching tools.
+
+- Use matching_agent when the user wants to **identify or tag a subset of jobs from Job_Search_Database based on structured fields** such as Years of Experience and Location.
+- Typical intents:
+  - “Mark all jobs that are 5 years of experience in San Francisco as good matches.”
+  - “Find jobs that match 3 years in New York (including remote-eligible ones).”
+  - “Tag rows that match 5 years / San Francisco in the Good_Match_Yes_No column.”
+
+matching_agent:
+- Reads the job spreadsheet whose ID is stored in the JOB_SEARCH_SPREADSHEET_ID environment variable.
+- Works on the Job_Search_Database sheet/tab.
+- Normalizes:
+  - `Location` (lowercase, trims, extracts city, treats ‘remote’ specially).
+  - `YOE` (e.g., “5+ years”, “5 Years” → “5 years”).
+- Expands rows where Location is “remote” so they count toward all cities.
+- Finds rows matching a target `(YOE_norm, Location_norm)` pair (e.g., `("5 years", "san francisco")`).
+- For those matching original rows, writes `"yes"` into the `Good_Match_Yes_No` column.
+- Does **not** modify any other job fields (Title, Company, URL, etc.).
+
+If the user asks to “mark”, “flag”, “tag”, or “label” jobs as good matches based on YOE + location,
+**transfer_to_agent(matching_agent)** with the current `session.state` and let it run its matching tools.
 
 ### Recruiter / Apollo Pipeline (`manager_apollo_agent`)
 Use this when the user asks things like:
@@ -216,6 +255,8 @@ from google_search_service.agent_google_search import google_search_agent
 from jobs_service.jobs_agent import root_agent as jobs_root_agent  
 from apollo_service.manager_apollo_agent import root_apollo_agent as apollo_agent_main
 from call_service.agent_call import elevenlabs_calling_agent as calling_agent
+from matching_service.agent_matching import matching_agent as matching_agent
+
 # from matching_service.matching import match_agent as match_agent
 
 # Hook up search agent as AgentTool 
@@ -231,7 +272,7 @@ orchestrator_agent = Agent(
     name="orchestrator",
     description=ORCH_INSTRUCTIONS,
     generate_content_config=types.GenerateContentConfig(temperature=0.2),
-    sub_agents=[calendar_agent, google_docs_agent, gmail_agent, google_sheets_agent, google_drive_agent, jobs_root_agent, apollo_agent_main, calling_agent], #apollo_agent, match_agent],
+    sub_agents=[calendar_agent, google_docs_agent, gmail_agent, google_sheets_agent, google_drive_agent, jobs_root_agent, apollo_agent_main, matching_agent, calling_agent ], #apollo_agent, match_agent],
     tools=[_search_tool],  # lets the LLM explicitly hand off; no search tool here
 )
 
@@ -241,5 +282,4 @@ __all__ = ["root_agent"]
 
 # do we need this or no?
 # from google.adk.apps.app import App
-
 # app = App(root_agent=root_agent, name="app")

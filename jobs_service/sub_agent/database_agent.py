@@ -239,8 +239,16 @@ def _get_first_sheet_name(spreadsheet_id: str) -> str:
 
 def append_jobs_to_job_search_database(jobs_result: List[Dict[str, Any]]) -> str:
     """
-    Append job results (title, url, company, location date_posted)
-    into the first sheet of 'Job_search_Database' (no arbitrary caps).
+    Append job results (title, url, company, location, date_posted, description)
+    into the first sheet of 'Job_search_Database'.
+
+    Layout (first sheet):
+      A: Jobs
+      B: Website
+      C: Company
+      D: Location
+      E: Date Posted
+      F: Description
     """
     if not jobs_result:
         return "No jobs to append (jobs_result is empty)."
@@ -249,13 +257,16 @@ def append_jobs_to_job_search_database(jobs_result: List[Dict[str, Any]]) -> str
     for j in jobs_result:
         if not isinstance(j, dict):
             continue
-        rows.append([
-            j.get("title", ""),
-            j.get("url", ""),
-            j.get("company", ""),
-            j.get("location", ""),
-            j.get("date_posted", ""),
-        ])
+        rows.append(
+            [
+                j.get("title", ""),
+                j.get("url", ""),
+                j.get("company", ""),
+                j.get("location", ""),
+                j.get("date_posted", ""),
+                j.get("description", ""),  # <-- NEW: write description into column F
+            ]
+        )
 
     if not rows:
         return "No valid job records found in jobs_result."
@@ -264,6 +275,7 @@ def append_jobs_to_job_search_database(jobs_result: List[Dict[str, Any]]) -> str
     sheet_name = _get_first_sheet_name(spreadsheet_id)
     sheets = get_sheets_service()
 
+    # A..F (6 columns) now matches the 6 values above
     result = sheets.spreadsheets().values().append(
         spreadsheetId=spreadsheet_id,
         range=f"{sheet_name}!A2:F",

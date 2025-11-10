@@ -20,3 +20,6 @@ python-dotenv
 
 # Common helper
 requests
+pandas
+
+PyPDF2

@@ -99,6 +99,19 @@ def list_drive_files(max_results: int = 0, folder_id: str = "", mime_type: str =
         ]
     except HttpError as e:
         raise ValueError(f"Failed to list Drive files: {e}")
+def list_drive_pdfs_in_folder(folder_id: str, max_results: int = 0) -> List[str]:
+    """
+    List PDF files inside a specific folder.
+      - folder_id: ID of the folder to search in.
+      - max_results: 0 means unlimited.
+    """
+    if not folder_id:
+        return ["folder_id is required."]
+    return list_drive_files(
+        max_results=max_results,
+        folder_id=folder_id,
+        mime_type="application/pdf"
+    )
 
 def list_drive_folders(max_results: int = 0, folder_id: str = "") -> List[str]:
     """List folders (optionally inside a specific parent folder)."""
@@ -180,10 +193,13 @@ def find_drive_items_by_name(name: str, exact: bool = True, mime_type: str = "",
         raise ValueError(f"Failed to search by name: {e}")
 
 def get_drive_file_content(file_id: str) -> str:
-    """Download file content as text, if possible."""
+    """Download file content as text, if possible (handles Google Docs, Sheets, and PDFs)."""
     drive = get_drive_service()
     try:
-        meta = drive.files().get(fileId=file_id, fields="id, name, mimeType, webViewLink").execute()
+        meta = drive.files().get(
+            fileId=file_id,
+            fields="id, name, mimeType, webViewLink"
+        ).execute()
         mime = meta["mimeType"]
 
         export_map = {
@@ -192,11 +208,13 @@ def get_drive_file_content(file_id: str) -> str:
             "application/vnd.google-apps.presentation": "text/plain",
         }
 
+        # 1) Build request (export vs raw download)
         if mime in export_map:
             request = drive.files().export_media(fileId=file_id, mimeType=export_map[mime])
         else:
             request = drive.files().get_media(fileId=file_id)
 
+        # 2) Download into memory
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
         done = False
@@ -204,10 +222,27 @@ def get_drive_file_content(file_id: str) -> str:
             _, done = downloader.next_chunk()
 
         content = fh.getvalue()
-        try:
-            text = content.decode("utf-8")
-        except UnicodeDecodeError:
-            text = f"[Binary or unsupported text encoding — {len(content)} bytes]"
+
+        # 3) Special handling for PDFs
+        if mime == "application/pdf":
+            try:
+                import PyPDF2  # make sure PyPDF2 is installed
+                fh.seek(0)
+                reader = PyPDF2.PdfReader(fh)
+                pages = []
+                for page in reader.pages:
+                    pages.append(page.extract_text() or "")
+                text = "\n".join(pages).strip()
+                if not text:
+                    text = f"[Parsed PDF but no extractable text found — file may be scanned images. Size={len(content)} bytes]"
+            except Exception as e:
+                text = f"[Unable to parse PDF text: {e}. Raw size={len(content)} bytes]"
+        else:
+            # 4) Default: assume it's text-ish
+            try:
+                text = content.decode("utf-8", errors="replace")
+            except Exception as e:
+                text = f"[Binary or unsupported text encoding — {len(content)} bytes; error={e}]"
 
         return f"File: {meta['name']} (ID: {file_id}, Type: {mime})\n\n{text}"
     except HttpError as e:
@@ -326,14 +361,25 @@ def get_drive_file_modified_time(file_id: str) -> dict:
 drive_agent_instruction_text = """
 You are a Google Drive assistant. You can:
 - List files and folders (across all drives)
-- Read file contents
+- Read file contents (including PDFs, Google Docs, Sheets, and Presentations)
 - Upload or create new files
 - Check sharing permissions
 - Retrieve modification times for Drive files
 - Recursively traverse a folder tree
 
+Special behavior for resumes and skill scoring:
+- If the user asks you to evaluate or score resumes in a specific folder against a list
+  of skills, follow this pattern:
+  1) Use `list_drive_pdfs_in_folder(folder_id=...)` (or `list_drive_files` with
+     mime_type='application/pdf') to get all PDF resumes in that folder.
+  2) For each resume, call `get_drive_file_content(file_id=...)` to read its text.
+  3) Using your own reasoning (no extra tools), compare the resume content to the
+     user-provided skill list.
+  4) For each resume, return a score from 0–100% plus a short explanation of which
+     skills are strongly, partially, or not covered.
+
 Rules:
-- Use file IDs from list_drive_files()/find_drive_items_by_name().
+- Use file IDs from list_drive_files()/list_drive_pdfs_in_folder()/find_drive_items_by_name().
 - Never expose credentials.
 - Keep text responses concise.
 - If a query is ambiguous, list the closest matches and ask which one to use.
@@ -348,6 +394,7 @@ google_drive_agent: Agent = Agent(
     ),
     generate_content_config=types.GenerateContentConfig(temperature=0.2),
     tools=[
+        list_drive_pdfs_in_folder, 
         list_drive_files,
         list_drive_folders,
         list_drive_files_recursive,
