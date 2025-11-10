@@ -287,8 +287,8 @@ from google_drive_service.agent_google_drive import google_drive_agent
 from google_search_service.agent_google_search import google_search_agent
 from jobs_service.jobs_agent import root_agent as jobs_root_agent  
 from resume_customization_service.agent_resume_customization import resume_customization_agent as resume_customization_agent
-# from apollo_service.manager_apollo_agent import root_apollo_agent as apollo_agent_main
-# from call_service.agent_call import elevenlabs_calling_agent as calling_agent
+from apollo_service.manager_apollo_agent import root_apollo_agent as apollo_agent_main
+from call_service.agent_call import elevenlabs_calling_agent as calling_agent
 from matching_service.agent_matching import matching_agent as matching_agent
 
 # Hook up search agent as AgentTool 
@@ -304,7 +304,7 @@ orchestrator_agent = Agent(
     name="orchestrator",
     description=ORCH_INSTRUCTIONS,
     generate_content_config=types.GenerateContentConfig(temperature=0.2),
-    sub_agents=[calendar_agent, google_docs_agent, gmail_agent, google_sheets_agent, google_drive_agent, jobs_root_agent, matching_agent, resume_customization_agent], # calling_agent , apollo_agent_main],
+    sub_agents=[calendar_agent, google_docs_agent, gmail_agent, google_sheets_agent, google_drive_agent, jobs_root_agent, matching_agent, resume_customization_agent, calling_agent , apollo_agent_main],
     tools=[_search_tool],  # lets the LLM explicitly hand off; no search tool here
 )
 

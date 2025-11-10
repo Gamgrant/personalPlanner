@@ -27,6 +27,19 @@ RESUME_SCORE_PROMPT_TEMPLATE = (
     "name, id, score, what_is_good, what_is_missing."
 )
 
+# ---- Prompt template for customizing a resume ----
+CUSTOMIZE_RESUME_PROMPT_TEMPLATE = (
+    "Task: Customize my resume for this job.\n\n"
+    "Job title: {job_title}\n\n"
+    "Target skills for this job:\n"
+    "{skills}\n\n"
+    "What is missing:\n"
+    "{missing}\n\n"
+    "Please update the LaTeX resume, rebuild the PDF, upload it to the configured Drive folder,\n"
+    "and return ONLY a single JSON object with:\n"
+    "status, job_title, company, drive_file_id, summary_of_changes."
+)
+
 
 def top_row(back_label: str = "◀ back", on_back=None, extra=None):
     """Top row with back button and optional extra widget (e.g., job selector)."""
@@ -53,6 +66,14 @@ def _ensure_session_flags():
     st.session_state.setdefault("needs_resume_scoring", False)
     st.session_state.setdefault("resume_scores", None)
     st.session_state.setdefault("open_resume_index", None)
+
+    # For customized resume comparison
+    st.session_state.setdefault("customized_resume_payload", None)
+    st.session_state.setdefault("customized_resume_for_index", None)
+
+    # For selection between original vs customized
+    st.session_state.setdefault("choose_original", False)
+    st.session_state.setdefault("choose_customized", False)
 
 
 def _make_buttons_green():
@@ -215,11 +236,15 @@ def _render_customize_job_selector():
     else:
         prev_job = st.session_state.get("current_custom_job")
         if prev_job != selected_label:
-            # Job changed → need to rescore resumes
+            # Job changed → need to rescore resumes and clear old customized resume
             st.session_state["current_custom_job"] = selected_label
             st.session_state["needs_resume_scoring"] = True
             st.session_state["resume_scores"] = None
             st.session_state["open_resume_index"] = None
+            st.session_state["customized_resume_payload"] = None
+            st.session_state["customized_resume_for_index"] = None
+            st.session_state["choose_original"] = False
+            st.session_state["choose_customized"] = False
 
 
 def _filter_good_matches(df: pd.DataFrame) -> pd.DataFrame:
@@ -476,6 +501,32 @@ def _get_job_skills(job_name: str) -> str:
     return str(value).strip()
 
 
+def _get_job_title_and_company(job_name: str):
+    """
+    Given the job_name (from the dropdown / Jobs column), fetch job title and company
+    from the sheet. Job title will usually be job_name, but we read it anyway.
+    """
+    df = _fetch_jobs_df()
+    if df.empty:
+        return job_name, ""
+    mapping = st.session_state.get("customize_now_job_rows", {}) or {}
+    row_idx = mapping.get(job_name)
+    if row_idx is None:
+        return job_name, ""
+    title = ""
+    company = ""
+    try:
+        if "Jobs" in df.columns:
+            title = str(df.loc[row_idx, "Jobs"]).strip()
+        if "Company" in df.columns:
+            company = str(df.loc[row_idx, "Company"]).strip()
+    except Exception:
+        pass
+    if not title:
+        title = job_name
+    return title, company
+
+
 def _score_resumes_for_current_job():
     """
     Calls the orchestrator to score resumes in the configured Drive folder
@@ -530,6 +581,127 @@ def _score_resumes_for_current_job():
     st.session_state["resume_scores"] = resumes
 
 
+def _extract_final_json(events):
+    """
+    Given orchestrator events from the customize-resume run,
+    extract the final JSON object containing drive_file_id and summary_of_changes.
+    """
+    final_text = None
+
+    for ev in events:
+        for part in ev.get("content", {}).get("parts", []):
+            txt = part.get("text")
+            if txt and '"drive_file_id"' in txt:
+                final_text = txt
+
+    if final_text is None:
+        raise RuntimeError("No JSON response with drive_file_id found")
+
+    s = final_text.strip()
+    # Strip ```json ... ``` if present
+    if s.startswith("```"):
+        if s.lower().startswith("```json"):
+            s = s[len("```json"):].strip()
+        else:
+            s = s[3:].strip()
+        if s.endswith("```"):
+            s = s[:-3].strip()
+
+    payload = json.loads(s)
+    return payload
+
+
+def _finalize_resume_selection(job_name: str, chosen_resume_id: str):
+    """
+    Write the chosen resume_id into the sheet's 'resume_id_latex_done' column
+    for the current job row, clear customize_now for that job, and reset UI state.
+    """
+    if not chosen_resume_id:
+        st.error("No resume ID available to save.")
+        return
+
+    df = _fetch_jobs_df()
+    if df.empty:
+        st.error("Cannot update sheet: no data.")
+        return
+
+    mapping = st.session_state.get("customize_now_job_rows", {}) or {}
+    row_idx = mapping.get(job_name)
+
+    if row_idx is None:
+        # Fallback: try to locate by Jobs column value
+        if "Jobs" in df.columns:
+            matches = df.index[df["Jobs"].astype(str) == str(job_name)]
+            if len(matches) > 0:
+                row_idx = int(matches[0])
+
+    if row_idx is None:
+        st.error(f"Could not find row for job '{job_name}' in sheet.")
+        return
+
+    # Find resume_id_latex_done column
+    resume_cols = [c for c in df.columns if c.strip().lower() == "resume_id_latex_done"]
+    if not resume_cols:
+        st.error(
+            "Sheet has no 'resume_id_latex_done' column. "
+            "Please add it first, then try again."
+        )
+        return
+    resume_col_name = resume_cols[0]
+    resume_col_idx = list(df.columns).index(resume_col_name)
+    resume_col_letter = _col_index_to_letter(resume_col_idx)
+
+    # Find customize_now column (to clear it so job disappears from dropdown)
+    customize_cols = [c for c in df.columns if c.strip().lower() == "customize_now"]
+    customize_col_name = customize_cols[0] if customize_cols else None
+    if customize_col_name is not None:
+        customize_col_idx = list(df.columns).index(customize_col_name)
+        customize_col_letter = _col_index_to_letter(customize_col_idx)
+    else:
+        customize_col_letter = None
+
+    sheet_name = JOB_SEARCH_RANGE.split("!")[0] if "!" in JOB_SEARCH_RANGE else "Sheet1"
+    rownum = int(row_idx) + 2  # header is row 1, data starts at row 2
+
+    updates = []
+
+    # Set resume_id_latex_done
+    resume_cell = f"{sheet_name}!{resume_col_letter}{rownum}"
+    updates.append({"range": resume_cell, "values": [[chosen_resume_id]]})
+
+    # Clear customize_now if column exists
+    if customize_col_letter is not None:
+        customize_cell = f"{sheet_name}!{customize_col_letter}{rownum}"
+        updates.append({"range": customize_cell, "values": [[""]]})
+
+    try:
+        service = get_sheets_service()
+        service.spreadsheets().values().batchUpdate(
+            spreadsheetId=JOB_SEARCH_SPREADSHEET_ID,
+            body={"valueInputOption": "USER_ENTERED", "data": updates},
+        ).execute()
+        st.success("Saved selected resume to sheet and marked job as done.")
+    except Exception as e:
+        st.error(f"Failed to write selected resume to sheet: {e}")
+        return
+
+    # 🔹 Only reset non-widget state here
+    st.session_state["current_custom_job"] = None
+    st.session_state["open_resume_index"] = None
+    st.session_state["resume_scores"] = None
+    st.session_state["customized_resume_payload"] = None
+    st.session_state["customized_resume_for_index"] = None
+
+    # Do NOT touch:
+    # - st.session_state["choose_original"]
+    # - st.session_state["choose_customized"]
+    # - st.session_state["select_job_dropdown"]
+    # Those are bound to widgets and must not be reassigned after instantiation.
+
+    # Rerun so dropdown refreshes (job disappears) and view resets
+    st.rerun()
+
+
 def _render_customize_resumes_view():
     """Main UI for Customize resumes tab: dropdown already rendered in top_row."""
     st.subheader("Customize resumes")
@@ -563,6 +735,11 @@ def _render_customize_resumes_view():
         with cols[i]:
             if st.button(label, key=f"resume_btn_{i}"):
                 st.session_state["open_resume_index"] = i
+                # Clear any previous customized resume if you switch which base resume is open
+                st.session_state["customized_resume_payload"] = None
+                st.session_state["customized_resume_for_index"] = None
+                st.session_state["choose_original"] = False
+                st.session_state["choose_customized"] = False
                 st.rerun()
 
     # --- "Popup" panel for selected resume ---
@@ -583,11 +760,32 @@ def _render_customize_resumes_view():
         with top_cols[0]:
             if st.button("Cancel", key="popup_cancel"):
                 st.session_state["open_resume_index"] = None
+                st.session_state["customized_resume_payload"] = None
+                st.session_state["customized_resume_for_index"] = None
+                st.session_state["choose_original"] = False
+                st.session_state["choose_customized"] = False
                 st.rerun()
         with top_cols[1]:
             if st.button("Customize", key="popup_customize", type="primary"):
-                # Placeholder for future customization pipeline
-                st.success("Customize action is not implemented yet, but this is where it will run.")
+                # Build prompt for customize action
+                job_title, company = _get_job_title_and_company(job_name)
+                missing = selected.get("what_is_missing", "") or ""
+                skills = job_skills or ""
+
+                prompt = CUSTOMIZE_RESUME_PROMPT_TEMPLATE.format(
+                    job_title=job_title,
+                    skills=skills,
+                    missing=missing,
+                )
+
+                with st.spinner("Customizing your resume for this job..."):
+                    events = run_orchestrator(prompt)
+                    try:
+                        payload = _extract_final_json(events)
+                        st.session_state["customized_resume_payload"] = payload
+                        st.session_state["customized_resume_for_index"] = open_idx
+                    except Exception as e:
+                        st.error(f"Failed to customize resume: {e}")
 
         left_col, right_col = st.columns([2.5, 1.5])
         with left_col:
@@ -595,6 +793,7 @@ def _render_customize_resumes_view():
             if file_id:
                 # Google Drive preview iframe (taller so more of the PDF is visible)
                 url = f"https://drive.google.com/file/d/{file_id}/preview"
+                st.markdown("**Original resume**")
                 components.iframe(url, height=900)
             else:
                 st.write("No file ID available for this resume.")
@@ -614,6 +813,60 @@ def _render_customize_resumes_view():
             # 3) What is missing
             st.markdown("**What is missing**")
             st.write(selected.get("what_is_missing", ""))
+
+            # 4) Summary of changes (if customization just ran)
+            payload = st.session_state.get("customized_resume_payload")
+            idx_for_payload = st.session_state.get("customized_resume_for_index")
+            if payload and idx_for_payload == open_idx:
+                st.markdown("---")
+                st.markdown("**Summary of changes (customized resume)**")
+                st.write(payload.get("summary_of_changes", ""))
+
+    # ---- Side-by-side comparison: original vs customized ----
+    payload = st.session_state.get("customized_resume_payload")
+    idx_for_payload = st.session_state.get("customized_resume_for_index")
+    if payload and idx_for_payload == open_idx:
+        st.markdown("### Original vs customized resume")
+
+        compare_cols = st.columns(2)
+        original_id = selected.get("id")
+        customized_id = payload.get("drive_file_id")
+
+        with compare_cols[0]:
+            st.markdown("**Original resume**")
+            if original_id:
+                url = f"https://drive.google.com/file/d/{original_id}/preview"
+                components.iframe(url, height=900)
+            else:
+                st.write("No file ID available for the original resume.")
+            st.checkbox(
+                "Select this version",
+                key="choose_original",
+            )
+
+        with compare_cols[1]:
+            st.markdown("**Customized resume**")
+            if customized_id:
+                url = f"https://drive.google.com/file/d/{customized_id}/preview"
+                components.iframe(url, height=900)
+            else:
+                st.write("No drive_file_id returned for customized resume.")
+            st.checkbox(
+                "Select this version",
+                key="choose_customized",
+            )
+
+        st.write("")
+        if st.button("Confirm selection", type="primary", key="confirm_resume_choice"):
+            use_orig = st.session_state.get("choose_original", False)
+            use_cust = st.session_state.get("choose_customized", False)
+
+            if use_orig == use_cust:
+                # Either both True or both False → invalid
+                st.warning("Please select exactly one version (original OR customized) before confirming.")
+            else:
+                chosen_id = original_id if use_orig else customized_id
+                _finalize_resume_selection(job_name, chosen_id)
 
 
 def page_customize():
@@ -656,13 +909,7 @@ def page_customize():
             st.session_state["customize_view"] = "customize_resumes"
             st.rerun()
 
-        if st.button(
-            "Outreach",
-            use_container_width=True,
-            key="btn_outreach",
-        ):
-            st.session_state["customize_view"] = "outreach"
-            st.rerun()
+        # Outreach tab removed
 
     # ---- Main content area ----
     with main_col:
@@ -708,11 +955,6 @@ def page_customize():
         # ======= CUSTOMIZE RESUMES VIEW =======
         elif view == "customize_resumes":
             _render_customize_resumes_view()
-
-        # ======= OUTREACH VIEW =======
-        elif view == "outreach":
-            st.subheader("Outreach")
-            st.info("Outreach view will go here (to be implemented).")
 
         else:
             # Fallback: reset to find_jobs

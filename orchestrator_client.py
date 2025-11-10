@@ -59,42 +59,42 @@ def list_apps():
     return apps
 
 
+import requests
+import uuid
+
+BASE_URL = "https://project-planner-service-98380938461.us-central1.run.app"
+APP_NAME = "orchestrator"
+USER_ID = "grant"
+SESSION_ID = "sess1"  # or make this dynamic if you want multiple parallel sessions
+
 def create_session(initial_state=None):
     """
-    Create or update a session.
+    Create (or reuse) an ADK session.
 
-    SAFE to call even if the session already exists.
-    If backend returns 409 (Conflict), we treat as "session already exists"
-    and DO NOT raise an exception.
+    - If the session doesn't exist yet → 200, return JSON from server.
+    - If it already exists → 409, treat that as success and just return a
+      minimal session object with id=SESSION_ID.
     """
-    if initial_state is None:
-        initial_state = {}
+    url = f"{BASE_URL}/apps/{APP_NAME}/users/{USER_ID}/sessions/{SESSION_ID}"
+    payload = {"state": initial_state or {}}
 
-    url = f"{SERVICE_URL}/apps/{APP_NAME}/users/{USER_ID}/sessions/{SESSION_ID}"
-    resp = requests.post(url, json=initial_state)
+    resp = requests.post(url, json=payload, timeout=30)
 
-    print("\n[create_session]")
-    print("Status:", resp.status_code)
-    print("Body:", resp.text[:500], "..." if len(resp.text) > 500 else "")
-
+    # Happy path
     if resp.status_code in (200, 201):
-        try:
-            session = resp.json()
-            print("\nParsed session JSON:")
-            pretty_print(session)
-            return session
-        except Exception as e:
-            print("JSON parse error in create_session:", e)
-            return None
+        return resp.json()
 
+    # Session already exists → treat as OK
     if resp.status_code == 409:
-        # Session already exists – treat as success
-        print("Session already exists; reusing it.")
-        return None
+        # You can optionally GET the session if you need more info,
+        # but for most usages you only need the session_id.
+        return {"id": SESSION_ID, "app_name": APP_NAME, "user_id": USER_ID}
 
-    # Any other error should bubble up
+    # Anything else is a real error
+    print("Session create failed")
+    print("Status:", resp.status_code)
+    print("Body:\n", resp.text)
     resp.raise_for_status()
-    return None
 
 
 def get_session():

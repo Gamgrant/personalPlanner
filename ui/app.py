@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
 # Import page functions from other modules
 from upload_page import page_upload, page_add_docs
 from customize_page import page_customize
-from chat_page import page_chat
+from ui.outreach_page import page_outreach
 
 # ---------- Hardcoded login (username + password only) ----------
 USE_LOGIN = False  # set True later to re-enable the username/password screen
@@ -59,7 +59,7 @@ ss_defaults()
 def page_home():
     # Read nav set by the anchor click and route
     nav = st.query_params.get("nav", None)
-    if nav in {"upload", "customize", "chat"}:
+    if nav in {"upload", "customize", "outreach"}:
         st.query_params.clear()
         st.session_state.page = nav
         st.rerun()
@@ -98,8 +98,8 @@ def page_home():
         st.markdown('<a class="bigbtn" href="?nav=customize" target="_self">'
                     'Customize resumes & Outreach for jobs</a>', unsafe_allow_html=True)
     with c3:
-        st.markdown('<a class="bigbtn" href="?nav=chat" target="_self">'
-                    'Chat — Ask me anything</a>', unsafe_allow_html=True)
+        st.markdown('<a class="bigbtn" href="?nav=outreach" target="_self">'
+                    'Outreach - call recruiters and send them custom email</a>', unsafe_allow_html=True)
 
 
 # ---------- Router ----------
@@ -115,8 +115,8 @@ else:
         page_add_docs()
     elif page == "customize":
         page_customize()
-    elif page == "chat":
-        page_chat()
+    elif page == "outreach":
+        page_outreach()
     else:
         st.session_state.page = "home"
         st.rerun()

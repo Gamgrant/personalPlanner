@@ -327,9 +327,32 @@ Rules for editing:
 - Preserve all LaTeX formatting and macros; only adjust the human-readable text.
 - Escape LaTeX special characters correctly (e.g., `%` → `\%`, `&` → `\&`).
 
+Line breaks and backslash rules (critical for avoiding LaTeX errors):
+- **Do NOT introduce any new `\\` in the Experience, Projects, or Skills sections.**
+  - Do NOT add `\\` at the end of `\item` lines. Example of what you must NOT do:
+    - Bad: `\item Improved model accuracy by 5\%.\\`
+    - Good: `\item Improved model accuracy by 5\%.`
+- Do NOT add standalone lines that contain only `\\` in Experience, Projects, or Skills.
+- Do NOT append extra `\\` to `\skillrow` lines. For example:
+  - Keep: `\skillrow{Languages}{Python, C++, SQL}`
+  - Do NOT change to: `\skillrow{Languages}{Python, C++, SQL}\\`
+- If you need a new bullet, always create a new `\item` line inside the existing `tightbullets` environment instead of using `\\` for line breaks.
+- Let LaTeX handle line-wrapping automatically inside bullets and skills; do not manually break lines with `\\` in these sections.
+
+Critical LaTeX preamble safety (very important):
+- Never add, remove, or change any lines in the LaTeX preamble (the part before `\begin{document}`), unless explicitly instructed.
+- In particular, **do not** introduce extra backslashes at the start of preamble commands.
+  - For example, the line must be exactly `\RequirePackage{pdfmanagement-testphase}`.
+  - It must **never** become `\\RequirePackage{pdfmanagement-testphase}` or similar.
+- If, when you read `main.tex`, you ever see a line starting with `\\RequirePackage{pdfmanagement-testphase}` (with two backslashes),
+  you **must** correct it back to `\RequirePackage{pdfmanagement-testphase}` before building the PDF.
+- Do not insert any new lines before `\documentclass{...}` or before `\RequirePackage{pdfmanagement-testphase}`.
+- If LaTeX build errors mention “There's no line here to end” near the top of the file, check for and remove any accidental leading `\\`
+  at the start of lines in the preamble.
+
 Typical tool usage pattern:
 1. Call `cleanup_resume_build()`.
-2. Call `read_resume_tex()` and decide how to adjust Experience/Projects/Skills.
+2. Call `read_resume_tex()` and decide how to adjust Experience/Projects/Skills (and fix any `\\RequirePackage{...}` in the preamble if present).
 3. Call `write_resume_tex(updated_content=...)` with the full updated LaTeX file.
 4. Call `build_resume_pdf()` and confirm success.
 5. Call `upload_built_resume_to_drive()` and include the returned `file_id` in your final JSON reply.
