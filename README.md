@@ -36,48 +36,7 @@ ELEVENLABS_PHONE_NUMBER_ID= ".."
 
 In google cloud run, you must authenticate all the APIs that is listed in verify.py to your project ID
 
-##
-
 ## Running the Program via the front-end 
 streamlit:
 1) to run : 
 streamlit run app.py
-
-
----
-
-
-
-
-# resume in latex
-!!! run this first 
-chmod +x resume_customization/bootstrap_tex.sh
-
-# then run 
-
-uv pip install --upgrade pip && uv add pymupdf pyside6 pillow && \
-( command -v tectonic >/dev/null 2>&1 || ./resume_customization/bootstrap_tex.sh || true ) && \
-uv run python resume_customization/build_resume.py --open
-
-# in the future to build latex, just run :
-uv run build-resume
-
-# this is for viewing and debugging
-uv run overlay
-uv run debug
----
-
-turn on Vertex and auth (ADC)
-```bash
-gcloud services enable aiplatform.googleapis.com
-gcloud auth application-default login
-```
-your .env should look like this:
-```
-GOOGLE_GENAI_USE_VERTEXAI=True
-GOOGLE_CLOUD_PROJECT=!!!!!!!!!!!!!!your project id from gcp!!!!!!!!!!!!!!!!!
-GOOGLE_CLOUD_LOCATION=us-central1
-GOOGLE_OAUTH_CLIENT_FILE=.creds/credentials.json
-GOOGLE_OAUTH_TOKEN_FILE=.creds/token.json
-```
-
